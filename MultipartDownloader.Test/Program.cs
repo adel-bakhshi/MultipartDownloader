@@ -4,59 +4,76 @@ namespace MultipartDownloader.Test;
 
 internal class Program
 {
+    private static bool _isPaused;
+    private static DownloadPackage? _downloadPackage;
+
     private static async Task Main(string[] args)
     {
-        const string url = "https://dl2.soft98.ir/soft/g/Glary.Utilities.Pro.6.24.0.28.rar?1744038389";
-        const string fileName = "Glary.Utilities.Pro.6.24.0.28.rar";
-        var desktopPath = Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
-        var filePath = Path.Combine(desktopPath, fileName);
-
-        var config = new DownloadConfiguration
+        const string url = "https://dl2.soft98.ir/soft/a/AnyDesk.9.5.1.zip?1744453565";
+        var desktopDirectory = Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
+        var configuration = new DownloadConfiguration
         {
-            Url = url,
-            DownloadPartOutputDirectory = desktopPath,
-            FilePath = filePath,
-            PartCount = 8,
-            ReserveStorageBeforeDownload = false,
-            RetryCountOnFailure = 3,
-            MaximumBytesPerSecond = 64 * 1024
+            ChunkFilesOutputDirectory = desktopDirectory,
+            ChunkCount = 8,
+            MaximumBytesPerSecond = 128 * 1024,
+            ParallelDownload = true,
+            ReserveStorageSpaceBeforeStartingDownload = true
         };
 
-        var downloader = new DownloadService(config);
-        downloader.DownloadStarted += DownloaderOnDownloadStarted;
-        downloader.DownloadProgressChanged += DownloaderOnDownloadProgressChanged;
-        downloader.PartDownloadProgressChanged += DownloaderOnPartDownloadProgressChanged;
-        downloader.DownloadCompleted += DownloaderOnDownloadCompleted;
+        var downloadService = new DownloadService(configuration);
+        var filePath = Path.Combine(desktopDirectory, "AnyDesk.9.5.1.zip");
+        _ = downloadService.DownloadFileTaskAsync(url, filePath);
 
-        await downloader.DownloadFileAsync();
+        while (true)
+        {
+            Console.Clear();
+            Console.WriteLine("Please choose:");
+            Console.WriteLine("P: Pause/Resume");
+            Console.WriteLine("S: Stop/Start");
+            Console.WriteLine("Esc: Close");
+            Console.Write("Your choice: ");
 
-        Console.ReadKey();
-    }
+            switch (Console.ReadKey().Key)
+            {
+                case ConsoleKey.P:
+                    {
+                        if (_isPaused)
+                        {
+                            downloadService.Resume();
+                            _isPaused = false;
+                        }
+                        else
+                        {
+                            downloadService.Pause();
+                            _isPaused = true;
+                        }
 
-    private static void DownloaderOnDownloadStarted(object? sender, EventArgs e)
-    {
-        Console.WriteLine("Download started...");
-        Console.WriteLine("==================================================");
-        Console.WriteLine("");
-    }
+                        break;
+                    }
 
-    private static void DownloaderOnDownloadProgressChanged(object? sender, Core.DownloadEventArgs.DownloadProgressChangedEventArgs e)
-    {
-        Console.WriteLine("Download progress changed...");
-        Console.WriteLine($"Progress: {e.ProgressPercentage}% - Current speed: {e.BytesPerSecondSpeed} bytes/s - Average speed: {e.AverageBytesPerSecondSpeed} bytes/s");
-        Console.WriteLine($"Total file size: {e.TotalBytesSize} bytes - Downloaded size: {e.ReceivedBytesSize} bytes");
-        Console.WriteLine("==================================================");
-        Console.WriteLine("");
-    }
+                case ConsoleKey.S:
+                    {
+                        if (_downloadPackage == null)
+                        {
+                            await downloadService.CancelTaskAsync();
+                            _downloadPackage = downloadService.Package;
+                        }
+                        else
+                        {
+                            var package = _downloadPackage;
+                            downloadService = new DownloadService(configuration);
+                            _ = downloadService.DownloadFileTaskAsync(package);
+                            _downloadPackage = null;
+                        }
 
-    private static void DownloaderOnPartDownloadProgressChanged(object? sender, Core.DownloadEventArgs.PartDownloadProgressChangedEventArgs e)
-    {
-    }
+                        break;
+                    }
 
-    private static void DownloaderOnDownloadCompleted(object? sender, Core.DownloadEventArgs.DownloadFinishedEventArgs e)
-    {
-        Console.WriteLine("Download completed...");
-        Console.WriteLine("==================================================");
-        Console.WriteLine("");
+                case ConsoleKey.Escape:
+                    {
+                        return;
+                    }
+            }
+        }
     }
 }

@@ -1,92 +1,142 @@
-﻿using System.Diagnostics;
+﻿namespace MultipartDownloader.Core;
 
-namespace MultipartDownloader.Core;
-
-public class ThrottledStream : Stream
+/// <summary>
+///     Class for streaming data with throttling support.
+/// </summary>
+internal class ThrottledStream : Stream
 {
-    #region Private fields
-
+    public const long Infinite = long.MaxValue;
     private readonly Stream _baseStream;
-    private readonly long _maxBytesPerSecond;
-    private readonly Stopwatch _stopwatch = new();
-    private long _bytesReadOrWrittenThisSecond;
+    private long _bandwidthLimit;
+    private Bandwidth _bandwidth;
 
-    #endregion Private fields
-
-    #region Properties
-
-    public override bool CanRead => _baseStream.CanRead;
-    public override bool CanSeek => _baseStream.CanSeek;
-    public override bool CanWrite => _baseStream.CanWrite;
-    public override long Length => _baseStream.Length;
-    public override long Position { get => _baseStream.Position; set => _baseStream.Position = value; }
-
-    #endregion Properties
-
-    public ThrottledStream(Stream baseStream, long maxBytesPerSecond)
+    /// <summary>
+    ///     Initializes a new instance of the <see cref="T:ThrottledStream" /> class.
+    /// </summary>
+    /// <param name="baseStream">The base stream.</param>
+    /// <param name="bandwidthLimit">The maximum bytes per second that can be transferred through the base stream.</param>
+    /// <exception cref="ArgumentNullException">Thrown when baseStream /> is a null reference.</exception>
+    /// <exception cref="ArgumentOutOfRangeException">Thrown when <see cref="BandwidthLimit" /> is a negative value.</exception>
+    public ThrottledStream(Stream baseStream, long bandwidthLimit)
     {
-        _baseStream = baseStream ?? throw new ArgumentNullException(nameof(baseStream));
-        _maxBytesPerSecond = maxBytesPerSecond;
-        _stopwatch.Start();
-    }
-
-    public override async Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
-    {
-        var bytesRead = await _baseStream.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
-        if (bytesRead > 0)
-            await ThrottleAsync(bytesRead, cancellationToken).ConfigureAwait(false);
-
-        return bytesRead;
-    }
-
-    public override async Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
-    {
-        await _baseStream.WriteAsync(buffer, cancellationToken).ConfigureAwait(false);
-        await ThrottleAsync(buffer.Length, cancellationToken).ConfigureAwait(false);
-    }
-
-    public override int Read(byte[] buffer, int offset, int count)
-    {
-        var bytesRead = _baseStream.Read(buffer, offset, count);
-        if (bytesRead > 0)
-            ThrottleAsync(bytesRead, CancellationToken.None).GetAwaiter().GetResult();
-
-        return bytesRead;
-    }
-
-    public override void Write(byte[] buffer, int offset, int count)
-    {
-        _baseStream.Write(buffer, offset, count);
-        ThrottleAsync(count, CancellationToken.None).GetAwaiter().GetResult();
-    }
-
-    public override void Flush() => _baseStream.Flush();
-
-    public override long Seek(long offset, SeekOrigin origin) => _baseStream.Seek(offset, origin);
-
-    public override void SetLength(long value) => _baseStream.SetLength(value);
-
-    #region Helpers
-
-    private async Task ThrottleAsync(int bytes, CancellationToken cancellationToken)
-    {
-        _bytesReadOrWrittenThisSecond += bytes;
-
-        var elapsed = _stopwatch.Elapsed;
-        if (_bytesReadOrWrittenThisSecond >= _maxBytesPerSecond)
+        if (bandwidthLimit < 0)
         {
-            var expectedElapsed = TimeSpan.FromSeconds((double)_bytesReadOrWrittenThisSecond / _maxBytesPerSecond);
-            if (expectedElapsed > elapsed)
-            {
-                var delay = expectedElapsed - elapsed;
-                if (delay > TimeSpan.Zero)
-                    await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
-            }
+            throw new ArgumentOutOfRangeException(nameof(bandwidthLimit),
+                bandwidthLimit, "The maximum number of bytes per second can't be negative.");
+        }
 
-            _stopwatch.Restart();
-            _bytesReadOrWrittenThisSecond = 0;
+        _baseStream = baseStream ?? throw new ArgumentNullException(nameof(baseStream));
+        BandwidthLimit = bandwidthLimit;
+    }
+
+    /// <summary>
+    ///     Bandwidth Limit (in B/s)
+    /// </summary>
+    /// <value>The maximum bytes per second.</value>
+    public long BandwidthLimit
+    {
+        get => _bandwidthLimit;
+        set
+        {
+            _bandwidthLimit = value <= 0 ? Infinite : value;
+            _bandwidth ??= new Bandwidth();
+            _bandwidth.BandwidthLimit = _bandwidthLimit;
         }
     }
 
-    #endregion Helpers
+    /// <inheritdoc />
+    public override bool CanRead => _baseStream.CanRead;
+
+    /// <inheritdoc />
+    public override bool CanSeek => _baseStream.CanSeek;
+
+    /// <inheritdoc />
+    public override bool CanWrite => _baseStream.CanWrite;
+
+    /// <inheritdoc />
+    public override long Length => _baseStream.Length;
+
+    /// <inheritdoc />
+    public override long Position
+    {
+        get => _baseStream.Position;
+        set => _baseStream.Position = value;
+    }
+
+    /// <inheritdoc />
+    public override void Flush()
+    {
+        _baseStream.Flush();
+    }
+
+    /// <inheritdoc />
+    public override long Seek(long offset, SeekOrigin origin)
+    {
+        return _baseStream.Seek(offset, origin);
+    }
+
+    /// <inheritdoc />
+    public override void SetLength(long value)
+    {
+        _baseStream.SetLength(value);
+    }
+
+    /// <inheritdoc />
+    public override int Read(byte[] buffer, int offset, int count)
+    {
+        ThrottleAsync(count).Wait();
+        return _baseStream.Read(buffer, offset, count);
+    }
+
+    public override async Task<int> ReadAsync(byte[] buffer, int offset, int count,
+        CancellationToken cancellationToken)
+    {
+        await ThrottleAsync(count).ConfigureAwait(false);
+        return await _baseStream.ReadAsync(buffer, offset, count, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
+    public override void Write(byte[] buffer, int offset, int count)
+    {
+        ThrottleAsync(count).Wait();
+        _baseStream.Write(buffer, offset, count);
+    }
+
+    /// <inheritdoc />
+    public override async Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
+    {
+        await ThrottleAsync(count).ConfigureAwait(false);
+        await _baseStream.WriteAsync(buffer, offset, count, cancellationToken).ConfigureAwait(false);
+    }
+
+    public override void Close()
+    {
+        _baseStream.Close();
+        base.Close();
+    }
+
+    private async Task ThrottleAsync(int transmissionVolume)
+    {
+        // Make sure the buffer isn't empty.
+        if (BandwidthLimit > 0 && transmissionVolume > 0)
+        {
+            // Calculate the time to sleep.
+            _bandwidth.CalculateSpeed(transmissionVolume);
+            await SleepAsync(_bandwidth.PopSpeedRetrieveTime()).ConfigureAwait(false);
+        }
+    }
+
+    private static async Task SleepAsync(int time)
+    {
+        if (time > 0)
+        {
+            await Task.Delay(time).ConfigureAwait(false);
+        }
+    }
+
+    /// <inheritdoc />
+    public override string ToString()
+    {
+        return _baseStream?.ToString() ?? "ThrottledStream is null.";
+    }
 }

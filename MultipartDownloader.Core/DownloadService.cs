@@ -1,346 +1,332 @@
-﻿using MultipartDownloader.Core.DownloadEventArgs;
-using MultipartDownloader.Core.Exceptions;
-using MultipartDownloader.Core.Helpers;
-using MultipartDownloader.Core.Infrastructure;
+using Microsoft.Extensions.Logging;
+using MultipartDownloader.Core.Extensions.Helpers;
 using System.ComponentModel;
 
 namespace MultipartDownloader.Core;
 
-public class DownloadService
+/// <summary>
+/// Concrete implementation of the <see cref="AbstractDownloadService"/> class.
+/// </summary>
+public class DownloadService : AbstractDownloadService
 {
-    #region Private fields
-
-    private readonly System.Timers.Timer _calculateAverageSpeedTimer;
-    private readonly List<DownloadSpeed> _totalDownloadSpeeds = [];
-    private readonly List<long> _medianDownloadSpeeds = [];
-    private long _lastTotalReportedPosition;
-    private DateTime _lastTotalUpdateDate;
-    private long _lastAverageDownloadSpeed;
-    private DateTime _lastServiceUpdate = DateTime.MinValue;
-    private readonly TimeSpan _updateInterval = TimeSpan.FromSeconds(0.5);
-
-    #endregion Private fields
-
-    #region Properties
-
-    public DownloadOptions DownloadOptions { get; }
-    public DownloadConfiguration DownloadConfiguration { get; }
-
-    #endregion Properties
-
-    #region Events
-
-    public event EventHandler? DownloadStarted;
-
-    public event EventHandler<DownloadFinishedEventArgs>? DownloadCompleted;
-
-    public event EventHandler<DownloadProgressChangedEventArgs>? DownloadProgressChanged;
-
-    public event EventHandler<PartDownloadProgressChangedEventArgs>? PartDownloadProgressChanged;
-
-    #endregion Events
-
-    public DownloadService(DownloadConfiguration config)
+    /// <summary>
+    /// Initializes a new instance of the <see cref="DownloadService"/> class with the specified options.
+    /// </summary>
+    /// <param name="options">The configuration options for the download service.</param>
+    /// <param name="loggerFactory">Pass standard logger factory</param>
+    public DownloadService(DownloadConfiguration? options, ILoggerFactory? loggerFactory = null) : base(options)
     {
-        _calculateAverageSpeedTimer = new System.Timers.Timer(1000);
-        _calculateAverageSpeedTimer.Elapsed += CalculateAverageSpeedTimerOnElapsed;
-
-        // Create download options
-        DownloadOptions = new DownloadOptions(
-            config.Url,
-            config.FilePath,
-            config.DownloadPartOutputDirectory,
-            config.MaximumBytesPerSecond);
-
-        // Set DownloadConfig
-        DownloadConfiguration = config;
-        // Subscribe to PropertyChanged event
-        DownloadConfiguration.PropertyChanged += DownloadConfigurationOnPropertyChanged;
+        Logger = loggerFactory?.CreateLogger<DownloadService>();
     }
 
-    public async Task DownloadFileAsync()
+    /// <summary>
+    /// Initializes a new instance of the <see cref="DownloadService"/> class with default options.
+    /// </summary>
+    public DownloadService(ILoggerFactory? loggerFactory = null) : this(null, loggerFactory) { }
+
+    /// <summary>
+    /// Starts the download operation.
+    /// </summary>
+    /// <returns>A task that represents the asynchronous download operation. The task result contains the downloaded stream.</returns>
+    protected override async Task<Stream?> StartDownload(bool forceBuildStorage = true)
     {
         try
         {
-            // TODO: Make exceptions better
-            // TODO: If download failed and program crashed, Delete old download parts
-            // Check url validation
-            if (!DownloadOptions.CheckUrlValidation(DownloadOptions.Url))
-                throw new DownloadFileException();
+            await SingleInstanceSemaphore.WaitAsync().ConfigureAwait(false);
+            Package.TotalFileSize = await RequestInstances[0].GetFileSize().ConfigureAwait(false);
+            Package.IsSupportDownloadInRange = await RequestInstances[0].IsSupportDownloadInRange().ConfigureAwait(false);
 
-            // Get request info
-            await DownloadOptions.GetRequestInfoAsync(DownloadOptions.Url);
+            if (forceBuildStorage || !Package.IsStorageExists())
+                Package.BuildStorage(Options.ReserveStorageSpaceBeforeStartingDownload, Options.MaximumMemoryBufferBytes);
 
-            // Create output directory
-            StorageHelper.CreateOutputDirectoryByFilePath(DownloadOptions.FilePath);
-            // Create part output directory
-            StorageHelper.CreateOutputDirectory(DownloadOptions.DownloadPartOutputDirectory);
+            ValidateBeforeChunking();
+            ChunkHub.SetFileChunks(Package);
 
-            if (DownloadOptions.SupportsContentLength)
+            // firing the start event after creating chunks
+            OnDownloadStarted(new DownloadStartedEventArgs(Package.FileName, Package.TotalFileSize));
+
+            if (Options.ParallelDownload)
             {
-                // Validate file
-                if (DownloadOptions.TotalFileSize <= 0)
-                    throw new DownloadFileException();
-
-                // Reserve storage
-                if (DownloadConfiguration.ReserveStorageBeforeDownload)
-                    StorageHelper.ReserveStorageBeforeDownload(DownloadOptions.FilePath, DownloadOptions.TotalFileSize);
+                await ParallelDownload(PauseTokenSource.Token).ConfigureAwait(false);
             }
-
-            // Validate part count
-            if (DownloadConfiguration.PartCount <= 0)
-                throw new DownloadFileException();
-
-            // Download in one part
-            if (!DownloadOptions.SupportsContentLength || !DownloadOptions.SupportsAcceptRanges)
-            {
-                CreateDownloadPart(1, 0, DownloadOptions.TotalFileSize - 1, false);
-            }
-            // Download in multiple parts
             else
             {
-                CreateDownloadParts();
+                await SerialDownload(PauseTokenSource.Token).ConfigureAwait(false);
             }
 
-            // Set last data for calculating download speed
-            _lastTotalReportedPosition = 0;
-            _lastTotalUpdateDate = DateTime.Now;
-            // Start calculate average download speed
-            _calculateAverageSpeedTimer.Start();
+            await MergeChunksAsync();
 
-            // Raise DownloadStarted event
-            DownloadStarted?.Invoke(this, EventArgs.Empty);
-
-            // Download all parts asynchronously
-            DownloadOptions.DownloadParts.ForEach(part => _ = part.DownloadPartAsync());
+            await SendDownloadCompletionSignal(DownloadStatus.Completed).ConfigureAwait(false);
         }
-        catch (Exception ex)
+        catch (OperationCanceledException exp) // or TaskCanceledException
         {
-            Console.WriteLine($"Error message: {ex.Message}.");
-            throw;
+            await SendDownloadCompletionSignal(DownloadStatus.Stopped, exp).ConfigureAwait(false);
         }
-    }
-
-    public void PauseDownload()
-    {
-    }
-
-    public void StopDownload()
-    {
-    }
-
-    #region Helpers
-
-    private void CreateDownloadParts()
-    {
-        // Calculate part size
-        var partSize = DownloadOptions.TotalFileSize / DownloadConfiguration.PartCount;
-        // Create download parts
-        for (var i = 0; i < DownloadConfiguration.PartCount; i++)
+        catch (Exception exp)
         {
-            // Find start and end positions
-            var start = i * partSize;
-            var end = start + partSize - 1;
-            // Check if last part
-            if (i == DownloadConfiguration.PartCount - 1)
+            await SendDownloadCompletionSignal(DownloadStatus.Failed, exp).ConfigureAwait(false);
+        }
+        finally
+        {
+            SingleInstanceSemaphore.Release();
+            await Task.Yield();
+        }
+
+        return Package.GetStorageStream();
+    }
+
+    private async Task MergeChunksAsync()
+    {
+        if (Package.Chunks.Length == 0)
+            return;
+
+        // Open or create final file
+        await using var finalStream = new FileStream(Package.FileName, FileMode.OpenOrCreate, FileAccess.Write, FileShare.ReadWrite);
+        // Clear final stream
+        finalStream.SetLength(0);
+        // Order parts by Start value
+        var sortedChunks = Package.Chunks.OrderBy(chunk => chunk.Start).ToList();
+        foreach (var chunk in sortedChunks)
+        {
+            await using var tempStream = new FileStream(chunk.ChunkFilePath, FileMode.Open, FileAccess.Read);
+            finalStream.Seek(chunk.Start, SeekOrigin.Begin);
+            await tempStream.CopyToAsync(finalStream).ConfigureAwait(false);
+        }
+
+        // Check final size
+        if (finalStream.Length != Package.TotalFileSize)
+            throw new InvalidOperationException($"Final file size mismatch! Expected: {Package.TotalFileSize} bytes, Actual: {finalStream.Length} bytes");
+
+        // Remove temporary files
+        for (var i = 0; i < sortedChunks.Count; i++)
+        {
+            var tempFilePath = sortedChunks[i].ChunkFilePath;
+            if (File.Exists(tempFilePath))
+                File.Delete(tempFilePath);
+
+            // Remove temp directory after delete last download part
+            if (i == sortedChunks.Count - 1)
             {
-                // Calculate remain bytes and add them to the end of last part
-                var remainBytes = DownloadOptions.TotalFileSize % DownloadConfiguration.PartCount;
-                end = remainBytes == 0 ? end : end + remainBytes;
+                var directory = Path.GetDirectoryName(tempFilePath);
+                if (Directory.Exists(directory))
+                    Directory.Delete(directory, true);
             }
-
-            CreateDownloadPart(i + 1, start, end, true);
         }
     }
 
-    private void CreateDownloadPart(int partNumber, long start, long end, bool useRangeDownload)
+    /// <summary>
+    /// Sends the download completion signal with the specified <paramref name="state"/> and optional <paramref name="error"/>.
+    /// </summary>
+    /// <param name="state">The state of the download operation.</param>
+    /// <param name="error">The exception that caused the download to fail, if any.</param>
+    /// <returns>A task that represents the asynchronous operation.</returns>
+    private async Task SendDownloadCompletionSignal(DownloadStatus state, Exception? error = null)
     {
-        // Create a new instance of download part
-        var downloadPart = new DownloadPart(DownloadOptions);
-        // Initial download part
-        downloadPart.Initial(partNumber, start, end, useRangeDownload);
-        // Subscribe to DownloadCompleted event
-        downloadPart.DownloadCompleted += DownloadPartOnDownloadCompleted;
-        // Subscribe to DownloadProgressChanged event
-        downloadPart.DownloadProgressChanged += DownloadPartOnDownloadProgressChanged;
-
-        // Add download part to list
-        DownloadOptions.DownloadParts.Add(downloadPart);
+        var isCancelled = state == DownloadStatus.Stopped;
+        Package.IsSaveComplete = state == DownloadStatus.Completed;
+        Status = state;
+        OnDownloadFileCompleted(new AsyncCompletedEventArgs(error, isCancelled, Package));
     }
 
-    private async Task MergeDownloadPartsAsync()
+    /// <summary>
+    /// Validates the download configuration before chunking the file.
+    /// </summary>
+    private void ValidateBeforeChunking()
     {
-        try
+        CheckSingleChunkDownload();
+        CheckSupportDownloadInRange();
+        SetRangedSizes();
+        CheckSizes();
+        CheckOutputDirectory();
+    }
+
+    private void CheckOutputDirectory()
+    {
+        Options.ChunkFilesOutputDirectory = Options.ChunkFilesOutputDirectory?.Trim() ?? string.Empty;
+        if (string.IsNullOrEmpty(Options.ChunkFilesOutputDirectory?.Trim()) && !string.IsNullOrEmpty(Package.FileName?.Trim()))
         {
-            // Remove previous file
-            if (File.Exists(DownloadOptions.FilePath))
-                File.Delete(DownloadOptions.FilePath);
+            var directory = Path.GetDirectoryName(Package.FileName);
+            if (!string.IsNullOrEmpty(directory))
+                Options.ChunkFilesOutputDirectory = directory;
+        }
 
-            // Open or create final file
-            await using var finalStream = new FileStream(DownloadOptions.FilePath, FileMode.OpenOrCreate, FileAccess.Write, FileShare.ReadWrite);
+        if (string.IsNullOrEmpty(Options.ChunkFilesOutputDirectory))
+            return;
 
-            // Order parts by Start value
-            var sortedParts = DownloadOptions.DownloadParts.OrderBy(part => part.Start).ToList();
-            // Merge download parts with final stream
-            foreach (var part in sortedParts)
-                await part.MergeDownloadPartAsync(finalStream);
+        var fileName = Path.GetFileNameWithoutExtension(Package.FileName) ?? Guid.NewGuid().ToString();
+        Options.ChunkFilesOutputDirectory = Path.Combine(Options.ChunkFilesOutputDirectory, fileName);
 
-            // Check final size
-            if (finalStream.Length != DownloadOptions.TotalFileSize)
-                throw new DownloadFileException($"Final file size mismatch! Expected: {DownloadOptions.TotalFileSize} bytes, Actual: {finalStream.Length} bytes");
+        if (!Directory.Exists(Options.ChunkFilesOutputDirectory))
+            Directory.CreateDirectory(Options.ChunkFilesOutputDirectory);
+    }
 
-            // Remove temporary files
-            for (var i = 0; i < sortedParts.Count; i++)
+    /// <summary>
+    /// Sets the range sizes for the download operation.
+    /// </summary>
+    private void SetRangedSizes()
+    {
+        if (Options.RangeDownload)
+        {
+            if (!Package.IsSupportDownloadInRange)
             {
-                sortedParts[i].DeleteTempFile();
-
-                // Remove temp directory after delete last download part
-                if (i == sortedParts.Count - 1)
-                {
-                    var directory = Path.GetDirectoryName(sortedParts[i].TempFilePath);
-                    StorageHelper.RemoveDirectory(directory);
-                }
+                throw new NotSupportedException(
+                    "The server of your desired address does not support download in a specific range");
             }
-        }
-        catch (Exception ex)
-        {
-            throw new DownloadFileException($"Error merging parts: {ex.Message}");
-        }
-    }
 
-    private bool CheckDownloadCompleted()
-    {
-        // Check all parts are finished or not
-        return DownloadOptions.DownloadParts.TrueForAll(part => !part.IsActive);
-    }
+            if (Options.RangeHigh < Options.RangeLow)
+            {
+                Options.RangeLow = Options.RangeHigh - 1;
+            }
 
-    private async Task CompleteDownloadAndMergeFilesAsync()
-    {
-        // Dispose calculate average download speed
-        _calculateAverageSpeedTimer?.Stop();
-        _calculateAverageSpeedTimer?.Close();
-        _calculateAverageSpeedTimer?.Dispose();
+            if (Options.RangeLow < 0)
+            {
+                Options.RangeLow = 0;
+            }
 
-        // Raise download completed event
-        DownloadCompleted?.Invoke(this, new DownloadFinishedEventArgs { IsCompleted = true });
-        // Merge all parts after download finished
-        await MergeDownloadPartsAsync();
-    }
+            if (Options.RangeHigh < 0)
+            {
+                Options.RangeHigh = Options.RangeLow;
+            }
 
-    private async Task DownloadPartErrorActionAsync(DownloadPart downloadPart, Exception error)
-    {
-        // Dispose previous file stream
-        await downloadPart.DisposeStreamAsync();
+            if (Package.TotalFileSize > 0)
+            {
+                Options.RangeHigh = Math.Min(Package.TotalFileSize, Options.RangeHigh);
+            }
 
-        // Check if download part FailureCount reached the RetryCountOnFailure
-        // If FailureCount was greater than RetryCountOnFailure, we have to finish download and raise DownloadFinished event
-        // Otherwise let's start download part again
-        if (downloadPart.FailureCount <= DownloadConfiguration.RetryCountOnFailure)
-        {
-            // TODO: Resume download from last byte that received
-            // Delete temp file
-            downloadPart.DeleteTempFile();
-            // Initialize download part
-            downloadPart.Initial(downloadPart.PartNumber, downloadPart.Start, downloadPart.End, downloadPart.UseRangeDownload);
-            // Start download again
-            _ = downloadPart.DownloadPartAsync();
+            Package.TotalFileSize = Options.RangeHigh - Options.RangeLow + 1;
         }
         else
         {
-            // TODO: Finish download
-            // Finish();
-            DownloadCompleted?.Invoke(this, new DownloadFinishedEventArgs(error));
+            Options.RangeHigh = Options.RangeLow = 0; // reset range options
         }
     }
 
-    private void RaiseDownloadProgressChangedEvent()
+    /// <summary>
+    /// Checks if there is enough disk space before starting the download.
+    /// </summary>
+    private void CheckSizes()
     {
-        var receivedBytesSize = DownloadOptions.DownloadParts.Sum(part => part.Position);
-        var now = DateTime.Now;
-        var elapsedMilliseconds = (now - _lastTotalUpdateDate).TotalMilliseconds;
+        if (Options.CheckDiskSizeBeforeDownload)
+            FileHelper.ThrowIfNotEnoughSpace(Package.TotalFileSize, Package.FileName);
+    }
 
-        if (elapsedMilliseconds > 0) // Avoiding divide by 0
+    /// <summary>
+    /// Checks if the download should be handled as a single chunk.
+    /// </summary>
+    private void CheckSingleChunkDownload()
+    {
+        if (Package.TotalFileSize <= 1)
+            Package.TotalFileSize = 0;
+
+        if (Package.TotalFileSize <= Options.MinimumSizeOfChunking)
+            SetSingleChunkDownload();
+    }
+
+    /// <summary>
+    /// Checks if the server supports download in a specific range.
+    /// </summary>
+    private void CheckSupportDownloadInRange()
+    {
+        if (!Package.IsSupportDownloadInRange)
+            SetSingleChunkDownload();
+    }
+
+    /// <summary>
+    /// Sets the download configuration to handle the file as a single chunk.
+    /// </summary>
+    private void SetSingleChunkDownload()
+    {
+        Options.ChunkCount = 1;
+        Options.ParallelCount = 1;
+        ParallelSemaphore = new SemaphoreSlim(1, 1);
+    }
+
+    /// <summary>
+    /// Downloads the file in parallel chunks.
+    /// </summary>
+    /// <param name="pauseToken">The pause token for pausing the download.</param>
+    /// <returns>A task that represents the asynchronous operation.</returns>
+    private async Task ParallelDownload(PauseToken pauseToken)
+    {
+        var tasks = GetChunksTasks(pauseToken);
+        var result = Task.WhenAll(tasks);
+        await result.ConfigureAwait(false);
+
+        if (result.IsFaulted)
         {
-            // Add new speed sample to list
-            _totalDownloadSpeeds.Add(new DownloadSpeed
-            {
-                ReceivedBytes = receivedBytesSize - _lastTotalReportedPosition,
-                TotalMilliseconds = elapsedMilliseconds
-            });
-
-            // Due to optimization issues, we only store a limited number of speed data samples
-            if (_totalDownloadSpeeds.Count > DownloadConstants.NumberOfSpeedSamples)
-                _totalDownloadSpeeds.RemoveAt(0);
+            throw result.Exception;
         }
-
-        var currentSpeed = _totalDownloadSpeeds.Count > 0 ? (_totalDownloadSpeeds.LastOrDefault(speed => speed != null)?.BytesPerSecondSpeed ?? 0) : 0;
-        var averageSpeed = _lastAverageDownloadSpeed == 0 ? (long)_totalDownloadSpeeds.Average(speed => speed?.BytesPerSecondSpeed ?? 0) : _lastAverageDownloadSpeed;
-
-        var eventArgs = new DownloadProgressChangedEventArgs(
-            totalBytesSize: DownloadOptions.TotalFileSize,
-            receivedBytesSize: receivedBytesSize,
-            bytesPerSecondSpeed: currentSpeed,
-            averageBytesPerSecondSpeed: averageSpeed);
-
-        DownloadProgressChanged?.Invoke(this, eventArgs);
-
-        _lastTotalReportedPosition = receivedBytesSize;
-        _lastTotalUpdateDate = now;
     }
 
-    #endregion Helpers
-
-    #region Event handlers
-
-    private void CalculateAverageSpeedTimerOnElapsed(object? sender, System.Timers.ElapsedEventArgs e)
+    /// <summary>
+    /// Downloads the file in serial chunks.
+    /// </summary>
+    /// <param name="pauseToken">The pause token for pausing the download.</param>
+    /// <returns>A task that represents the asynchronous operation.</returns>
+    private async Task SerialDownload(PauseToken pauseToken)
     {
-        // Find median of the speeds and store it
-        var sortedSpeeds = _totalDownloadSpeeds.Select(speed => speed?.BytesPerSecondSpeed ?? 0).Order().ToList();
-        var medianSpeed = sortedSpeeds.Count > 0 ? sortedSpeeds[(int)Math.Ceiling(sortedSpeeds.Count / 2.0)] : 0;
-        _medianDownloadSpeeds.Add(medianSpeed);
-
-        // Due to optimization issues, we only store a limited number of median data samples
-        if (_medianDownloadSpeeds.Count > DownloadConstants.NumberOfMedianSamples)
-            _medianDownloadSpeeds.RemoveAt(0);
-
-        // Calculate average download speed
-        _lastAverageDownloadSpeed = (long)_medianDownloadSpeeds.Average();
+        foreach (var task in GetChunksTasks(pauseToken))
+            await task.ConfigureAwait(false);
     }
 
-    private void DownloadConfigurationOnPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    /// <summary>
+    /// Gets the tasks for downloading the chunks.
+    /// </summary>
+    /// <param name="pauseToken">The pause token for pausing the download.</param>
+    /// <returns>An enumerable collection of tasks representing the chunk downloads.</returns>
+    private IEnumerable<Task> GetChunksTasks(PauseToken pauseToken)
     {
-        // Update MaximumBytesPerSecond speed
-        if (e.PropertyName?.Equals(nameof(DownloadConfiguration.MaximumBytesPerSecond)) == true)
-            DownloadOptions.ChangeMaximumBytesPerSecond(DownloadConfiguration.MaximumBytesPerSecond);
-    }
-
-    private async void DownloadPartOnDownloadCompleted(object? sender, PartDownloadCompletedEventArgs e)
-    {
-        // Check download part for errors
-        if (e.Error != null)
-            await DownloadPartErrorActionAsync(e.DownloadPart, e.Error);
-
-        // Check download completed
-        if (CheckDownloadCompleted())
-            await CompleteDownloadAndMergeFilesAsync();
-
-        // TODO: Implement the logic of adding a new DownloadPart
-    }
-
-    private void DownloadPartOnDownloadProgressChanged(object? sender, PartDownloadProgressChangedEventArgs e)
-    {
-        // Raise PartDownloadProgressChanged event
-        PartDownloadProgressChanged?.Invoke(this, e);
-
-        // Raise DownloadProgressChanged event after a period of time
-        // or when download part completed
-        var now = DateTime.Now;
-        if (now - _lastServiceUpdate >= _updateInterval || e.IsCompleted)
+        for (int i = 0; i < Package.Chunks.Length; i++)
         {
-            RaiseDownloadProgressChangedEvent();
-            _lastServiceUpdate = now;
+            var request = RequestInstances[i % RequestInstances.Count];
+            yield return DownloadChunk(Package.Chunks[i], request, pauseToken, GlobalCancellationTokenSource);
         }
     }
 
-    #endregion Event handlers
+    /// <summary>
+    /// Downloads a specific chunk of the file.
+    /// </summary>
+    /// <param name="chunk">The chunk to download.</param>
+    /// <param name="request">The request to use for the download.</param>
+    /// <param name="pause">The pause token for pausing the download.</param>
+    /// <param name="cancellationTokenSource">The cancellation token source for cancelling the download.</param>
+    /// <returns>A task that represents the asynchronous operation. The task result contains the downloaded chunk.</returns>
+    private async Task<Chunk> DownloadChunk(Chunk chunk, Request request, PauseToken pause, CancellationTokenSource cancellationTokenSource)
+    {
+        //ChunkDownloader chunkDownloader = new(chunk, Options, Package.Storage!, Logger);
+
+        ChunkDownloader chunkDownloader = GetChunkDownloader(chunk);
+        chunkDownloader.DownloadProgressChanged += OnChunkDownloadProgressChanged;
+        await ParallelSemaphore.WaitAsync(cancellationTokenSource.Token).ConfigureAwait(false);
+        try
+        {
+            cancellationTokenSource.Token.ThrowIfCancellationRequested();
+            return await chunkDownloader.Download(request, pause, cancellationTokenSource.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception)
+        {
+            cancellationTokenSource.Token.ThrowIfCancellationRequested();
+            cancellationTokenSource.Cancel(false);
+            throw;
+        }
+        finally
+        {
+            ParallelSemaphore.Release();
+        }
+    }
+
+    private ChunkDownloader GetChunkDownloader(Chunk chunk)
+    {
+        if (string.IsNullOrEmpty(chunk.ChunkFilePath))
+        {
+            var fileName = Path.GetFileNameWithoutExtension(Package.FileName) + $".part{int.Parse(chunk.Id) + 1}.tmp";
+            chunk.ChunkFilePath = Path.Combine(Options.ChunkFilesOutputDirectory, fileName);
+        }
+
+        return new(chunk, Options, Logger);
+    }
 }

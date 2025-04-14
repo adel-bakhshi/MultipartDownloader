@@ -2,6 +2,7 @@
 using MultipartDownloader.Core.Exceptions;
 using MultipartDownloader.Core.Helpers;
 using MultipartDownloader.Core.Infrastructure;
+using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Security;
 using System.Security.Cryptography.X509Certificates;
@@ -13,11 +14,10 @@ public class DownloadPart
 {
     #region Private fields
 
-    private readonly System.Timers.Timer _calculateAverageSpeedTimer;
-
     private readonly DownloadOptions _downloadOptions;
     private FileStream? _partFileStream;
 
+    private readonly System.Timers.Timer _calculateAverageSpeedTimer;
     private long _lastAverageDownloadSpeed;
     private long _lastReportedPosition;
     private DateTime _lastProgressChanged;
@@ -77,25 +77,19 @@ public class DownloadPart
             // Set download part active flag to true
             IsActive = true;
 
-            using var handler = new SocketsHttpHandler
+            var handler = new SocketsHttpHandler
             {
-                SslOptions = new SslClientAuthenticationOptions
-                {
-                    EnabledSslProtocols = System.Security.Authentication.SslProtocols.Tls12 | System.Security.Authentication.SslProtocols.Tls11 | System.Security.Authentication.SslProtocols.Tls,
-                    RemoteCertificateValidationCallback = Callback
-                },
-                MaxConnectionsPerServer = 1000,
-                KeepAlivePingDelay = TimeSpan.FromSeconds(10),
-                KeepAlivePingTimeout = TimeSpan.FromSeconds(10),
-                Expect100ContinueTimeout = TimeSpan.FromSeconds(5),
-                ConnectTimeout = TimeSpan.FromSeconds(30)
+                PooledConnectionLifetime = TimeSpan.FromMinutes(10), // جلوگیری از قطعی اتصال
+                PooledConnectionIdleTimeout = TimeSpan.FromMinutes(5),
+                MaxConnectionsPerServer = 50, // کنترل اتصالات همزمان
+                ConnectTimeout = TimeSpan.FromSeconds(30),
+                ResponseDrainTimeout = TimeSpan.FromSeconds(10),
+                UseCookies = false, // اگر نیازی به کوکی نیست
+                AutomaticDecompression = DecompressionMethods.GZip // کاهش حجم دانلود
             };
 
-#if NET8_0_OR_GREATER
-            handler.SslOptions.EnabledSslProtocols |= System.Security.Authentication.SslProtocols.Tls13;
-#endif
-
             using var httpClient = new HttpClient(handler);
+            httpClient.Timeout = Timeout.InfiniteTimeSpan;
             using var request = new HttpRequestMessage(HttpMethod.Get, _downloadOptions.Url);
 
             // Set Range header for downloading a specific part
@@ -151,8 +145,8 @@ public class DownloadPart
 
             // Dispose file stream
             await DisposeStreamAsync().ConfigureAwait(false);
-            // Dispose calculate average download speed timer
-            DisposeCalculateAverageDownloadSpeedTimer();
+            // Stop calculate average download speed timer
+            StopCalculateAverageDownloadSpeed();
 
             // Set download part active flag to true
             IsActive = false;
@@ -163,6 +157,8 @@ public class DownloadPart
         {
             // Dispose file stream
             await DisposeStreamAsync().ConfigureAwait(false);
+            // Stop calculate average download speed timer
+            StopCalculateAverageDownloadSpeed();
 
             // Set download part active flag to true
             IsActive = false;
@@ -171,11 +167,6 @@ public class DownloadPart
             // Raise completed event
             DownloadCompleted?.Invoke(this, new PartDownloadCompletedEventArgs { DownloadPart = this, Error = ex });
         }
-    }
-
-    private bool Callback(object sender, X509Certificate? certificate, X509Chain? chain, SslPolicyErrors sslPolicyErrors)
-    {
-        return true;
     }
 
     public async Task MergeDownloadPartAsync(FileStream finalStream)
@@ -320,7 +311,7 @@ public class DownloadPart
         return TimeSpan.FromSeconds(1) - elapsed;
     }
 
-    private void DisposeCalculateAverageDownloadSpeedTimer()
+    private void StopCalculateAverageDownloadSpeed()
     {
         // Stop calculate average download speed timer
         _calculateAverageSpeedTimer?.Stop();
