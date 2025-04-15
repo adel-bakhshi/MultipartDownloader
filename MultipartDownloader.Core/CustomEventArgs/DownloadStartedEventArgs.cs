@@ -1,4 +1,4 @@
-﻿namespace MultipartDownloader.Core;
+﻿namespace MultipartDownloader.Core.CustomEventArgs;
 
 /// <summary>
 /// Provides data for the DownloadService.DownloadProgressChanged event of a DownloadService.

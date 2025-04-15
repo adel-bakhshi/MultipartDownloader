@@ -6,6 +6,8 @@ internal class Program
 {
     private static bool _isPaused;
     private static DownloadPackage? _downloadPackage;
+    private static bool _isMerging;
+    private static bool _isMerged;
 
     private static async Task Main(string[] args)
     {
@@ -21,11 +23,21 @@ internal class Program
         };
 
         var downloadService = new DownloadService(configuration);
+        // Events
+        downloadService.MergeStarted += DownloadServiceOnMergeStarted;
+        downloadService.MergeProgressChanged += DownloadServiceOnMergeProgressChanged;
+
         var filePath = Path.Combine(desktopDirectory, "AnyDesk.9.5.1.zip");
         _ = downloadService.DownloadFileTaskAsync(url, filePath);
 
-        while (true)
+        while (!_isMerged)
         {
+            if (_isMerging)
+            {
+                await Task.Delay(100);
+                continue;
+            }
+
             Console.Clear();
             Console.WriteLine("Please choose:");
             Console.WriteLine("P: Pause/Resume");
@@ -37,6 +49,9 @@ internal class Program
             {
                 case ConsoleKey.P:
                     {
+                        if (_isMerging)
+                            break;
+
                         if (_isPaused)
                         {
                             downloadService.Resume();
@@ -53,6 +68,9 @@ internal class Program
 
                 case ConsoleKey.S:
                     {
+                        if (_isMerging)
+                            break;
+
                         if (_downloadPackage == null)
                         {
                             await downloadService.CancelTaskAsync();
@@ -71,9 +89,25 @@ internal class Program
 
                 case ConsoleKey.Escape:
                     {
+                        if (_isMerging)
+                            break;
+
                         return;
                     }
             }
         }
+    }
+
+    private static void DownloadServiceOnMergeStarted(object? sender, Core.CustomEventArgs.MergeStartedEventArgs e)
+    {
+        _isMerging = true;
+        Console.Clear();
+        Console.WriteLine("Merge started...");
+    }
+
+    private static void DownloadServiceOnMergeProgressChanged(object? sender, Core.CustomEventArgs.MergeProgressChangedEventArgs e)
+    {
+        Console.WriteLine(e.Progress);
+        _isMerged = e.Progress >= 100;
     }
 }

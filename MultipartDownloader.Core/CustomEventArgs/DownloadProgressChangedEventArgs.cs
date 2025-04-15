@@ -1,4 +1,4 @@
-﻿namespace MultipartDownloader.Core;
+﻿namespace MultipartDownloader.Core.CustomEventArgs;
 
 /// <summary>
 /// Provides any information about progress, like progress percentage, speed,

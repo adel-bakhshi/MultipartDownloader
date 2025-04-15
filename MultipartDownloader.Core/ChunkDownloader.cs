@@ -14,7 +14,7 @@ internal class ChunkDownloader
 
     internal Chunk Chunk { get; set; }
 
-    public event EventHandler<DownloadProgressChangedEventArgs>? DownloadProgressChanged;
+    public event EventHandler<CustomEventArgs.DownloadProgressChangedEventArgs>? DownloadProgressChanged;
 
     public ChunkDownloader(Chunk chunk, DownloadConfiguration config, ILogger? logger = null)
     {
@@ -171,7 +171,7 @@ internal class ChunkDownloader
                     Chunk.Position += readSize;
                     _logger?.LogDebug($"The chunk {Chunk.Id} current position is: {Chunk.Position} of {Chunk.Length}");
 
-                    OnDownloadProgressChanged(new DownloadProgressChangedEventArgs(Chunk.Id)
+                    OnDownloadProgressChanged(new CustomEventArgs.DownloadProgressChangedEventArgs(Chunk.Id)
                     {
                         TotalBytesToReceive = Chunk.Length,
                         ReceivedBytesSize = Chunk.Position,
@@ -202,7 +202,7 @@ internal class ChunkDownloader
         _logger?.LogDebug($"ReadStream of the chunk {Chunk.Id} completed successfully");
     }
 
-    private void OnDownloadProgressChanged(DownloadProgressChangedEventArgs e)
+    private void OnDownloadProgressChanged(CustomEventArgs.DownloadProgressChangedEventArgs e)
     {
         DownloadProgressChanged?.Invoke(this, e);
     }

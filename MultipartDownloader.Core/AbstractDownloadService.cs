@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Logging;
+using MultipartDownloader.Core.CustomEventArgs;
 using MultipartDownloader.Core.Extensions.Helpers;
 using System.ComponentModel;
 using System.Net;
@@ -97,17 +98,27 @@ public abstract class AbstractDownloadService : IDownloadService, IDisposable, I
     /// <summary>
     /// Event triggered when the download progress changes.
     /// </summary>
-    public event EventHandler<DownloadProgressChangedEventArgs> DownloadProgressChanged;
+    public event EventHandler<CustomEventArgs.DownloadProgressChangedEventArgs> DownloadProgressChanged;
 
     /// <summary>
     /// Event triggered when the progress of a chunk download changes.
     /// </summary>
-    public event EventHandler<DownloadProgressChangedEventArgs> ChunkDownloadProgressChanged;
+    public event EventHandler<CustomEventArgs.DownloadProgressChangedEventArgs> ChunkDownloadProgressChanged;
 
     /// <summary>
     /// Event triggered when the download operation starts.
     /// </summary>
     public event EventHandler<DownloadStartedEventArgs> DownloadStarted;
+
+    /// <summary>
+    /// Event triggered when the merge operation progress changed.
+    /// </summary>
+    public event EventHandler<MergeProgressChangedEventArgs> MergeProgressChanged;
+
+    /// <summary>
+    /// Event triggered when the merge operation starts.
+    /// </summary>
+    public event EventHandler<MergeStartedEventArgs> MergeStarted;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="AbstractDownloadService"/> class with the specified options.
@@ -430,14 +441,14 @@ public abstract class AbstractDownloadService : IDownloadService, IDisposable, I
     /// </summary>
     /// <param name="sender">The sender of the event.</param>
     /// <param name="e">The event arguments for the download progress changed event.</param>
-    protected void OnChunkDownloadProgressChanged(object? sender, DownloadProgressChangedEventArgs e)
+    protected void OnChunkDownloadProgressChanged(object? sender, CustomEventArgs.DownloadProgressChangedEventArgs e)
     {
         if (e.ReceivedBytesSize > Package.TotalFileSize)
             Package.TotalFileSize = e.ReceivedBytesSize;
 
         Bandwidth.CalculateSpeed(e.ProgressedByteSize);
         Options.ActiveChunks = Options.ParallelCount - ParallelSemaphore.CurrentCount;
-        var totalProgressArg = new DownloadProgressChangedEventArgs(nameof(DownloadService))
+        var totalProgressArg = new CustomEventArgs.DownloadProgressChangedEventArgs(nameof(DownloadService))
         {
             TotalBytesToReceive = Package.TotalFileSize,
             ReceivedBytesSize = Package.ReceivedBytesSize,
@@ -451,6 +462,27 @@ public abstract class AbstractDownloadService : IDownloadService, IDisposable, I
         e.ActiveChunks = totalProgressArg.ActiveChunks;
         ChunkDownloadProgressChanged?.Invoke(this, e);
         DownloadProgressChanged?.Invoke(this, totalProgressArg);
+    }
+
+    /// <summary>
+    /// Raises the <see cref="MergeProgressChanged"/> event.
+    /// </summary>
+    /// <param name="e">The event arguments for the merge progress changed event.</param>
+    protected void OnMergeProgressChanged(MergeProgressChangedEventArgs e)
+    {
+        MergeProgressChanged?.Invoke(this, e);
+    }
+
+    /// <summary>
+    /// Raises the <see cref="MergeStarted"/> event.
+    /// </summary>
+    protected void OnMergeStarted()
+    {
+        var totalFileSize = Package.TotalFileSize;
+        var numberOfChunks = Package.Chunks.Length;
+        var chunksDirectoryPath = Package.Chunks.Length > 1 ? (Path.GetDirectoryName(Package.Chunks[0].ChunkFilePath) ?? string.Empty) : string.Empty;
+        var eventArgs = new MergeStartedEventArgs(totalFileSize, numberOfChunks, chunksDirectoryPath);
+        MergeStarted?.Invoke(this, eventArgs);
     }
 
     /// <summary>

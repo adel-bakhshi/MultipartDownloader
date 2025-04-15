@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Logging;
+using MultipartDownloader.Core.CustomEventArgs;
 using MultipartDownloader.Core.Extensions.Helpers;
 using System.ComponentModel;
 
@@ -54,17 +55,18 @@ public class DownloadService : AbstractDownloadService
                 await SerialDownload(PauseTokenSource.Token).ConfigureAwait(false);
             }
 
+            // Merge chunks
             await MergeChunksAsync();
-
-            await SendDownloadCompletionSignal(DownloadStatus.Completed).ConfigureAwait(false);
+            // Complete download
+            SendDownloadCompletionSignal(DownloadStatus.Completed);
         }
         catch (OperationCanceledException exp) // or TaskCanceledException
         {
-            await SendDownloadCompletionSignal(DownloadStatus.Stopped, exp).ConfigureAwait(false);
+            SendDownloadCompletionSignal(DownloadStatus.Stopped, exp);
         }
         catch (Exception exp)
         {
-            await SendDownloadCompletionSignal(DownloadStatus.Failed, exp).ConfigureAwait(false);
+            SendDownloadCompletionSignal(DownloadStatus.Failed, exp);
         }
         finally
         {
@@ -80,18 +82,20 @@ public class DownloadService : AbstractDownloadService
         if (Package.Chunks.Length == 0)
             return;
 
+        // Raise merge started event
+        OnMergeStarted();
+
         // Open or create final file
         await using var finalStream = new FileStream(Package.FileName, FileMode.OpenOrCreate, FileAccess.Write, FileShare.ReadWrite);
         // Clear final stream
         finalStream.SetLength(0);
+        // Seek to the beginning
+        finalStream.Seek(0, SeekOrigin.Begin);
         // Order parts by Start value
         var sortedChunks = Package.Chunks.OrderBy(chunk => chunk.Start).ToList();
+        // Merge parts
         foreach (var chunk in sortedChunks)
-        {
-            await using var tempStream = new FileStream(chunk.ChunkFilePath, FileMode.Open, FileAccess.Read);
-            finalStream.Seek(chunk.Start, SeekOrigin.Begin);
-            await tempStream.CopyToAsync(finalStream).ConfigureAwait(false);
-        }
+            await MergeFileWithProgressAsync(finalStream, chunk).ConfigureAwait(false);
 
         // Check final size
         if (finalStream.Length != Package.TotalFileSize)
@@ -114,13 +118,53 @@ public class DownloadService : AbstractDownloadService
         }
     }
 
+    private long _mergePosition;
+
+    private async Task MergeFileWithProgressAsync(Stream finalStrem, Chunk chunk)
+    {
+        // Open temp stream
+        await using var tempStream = new FileStream(chunk.ChunkFilePath, FileMode.Open, FileAccess.Read);
+        var buffer = new byte[8192]; // 8 kilobyte buffer
+        var bytesRead = 0;
+        long lastPosition = 0;
+
+        // Read bytes from temp stream
+        while ((bytesRead = await tempStream.ReadAsync(buffer).ConfigureAwait(false)) > 0)
+        {
+            // Write bytes to final stream
+            await finalStrem.WriteAsync(buffer.AsMemory(0, bytesRead)).ConfigureAwait(false);
+            // Update position
+            _mergePosition += bytesRead;
+
+            // Every time position progressed 1MB (1024 * 1024), raise merge position changed event
+            if (_mergePosition - lastPosition > 1024 * 1024)
+            {
+                SendMergeProgressChangedSignal(_mergePosition, Package.TotalFileSize);
+                lastPosition = _mergePosition;
+            }
+        }
+
+        // Make sure raise event for last time
+        if (_mergePosition != lastPosition)
+            SendMergeProgressChangedSignal(_mergePosition, Package.TotalFileSize);
+    }
+
+    private void SendMergeProgressChangedSignal(double copiedBytesSize, double totalBytesSize)
+    {
+        // Calculate progress percentage
+        var progress = copiedBytesSize / totalBytesSize * 100;
+        var eventArgs = new MergeProgressChangedEventArgs(progress);
+        // Raise event
+        OnMergeProgressChanged(eventArgs);
+    }
+
     /// <summary>
     /// Sends the download completion signal with the specified <paramref name="state"/> and optional <paramref name="error"/>.
     /// </summary>
     /// <param name="state">The state of the download operation.</param>
     /// <param name="error">The exception that caused the download to fail, if any.</param>
     /// <returns>A task that represents the asynchronous operation.</returns>
-    private async Task SendDownloadCompletionSignal(DownloadStatus state, Exception? error = null)
+    private void SendDownloadCompletionSignal(DownloadStatus state, Exception? error = null)
     {
         var isCancelled = state == DownloadStatus.Stopped;
         Package.IsSaveComplete = state == DownloadStatus.Completed;
@@ -293,8 +337,6 @@ public class DownloadService : AbstractDownloadService
     /// <returns>A task that represents the asynchronous operation. The task result contains the downloaded chunk.</returns>
     private async Task<Chunk> DownloadChunk(Chunk chunk, Request request, PauseToken pause, CancellationTokenSource cancellationTokenSource)
     {
-        //ChunkDownloader chunkDownloader = new(chunk, Options, Package.Storage!, Logger);
-
         ChunkDownloader chunkDownloader = GetChunkDownloader(chunk);
         chunkDownloader.DownloadProgressChanged += OnChunkDownloadProgressChanged;
         await ParallelSemaphore.WaitAsync(cancellationTokenSource.Token).ConfigureAwait(false);
@@ -319,6 +361,11 @@ public class DownloadService : AbstractDownloadService
         }
     }
 
+    /// <summary>
+    /// Gets the chunk downloader for the specified chunk.
+    /// </summary>
+    /// <param name="chunk">The chunk to get the downloader for.</param>
+    /// <returns>The chunk downloader for the specified chunk.</returns>
     private ChunkDownloader GetChunkDownloader(Chunk chunk)
     {
         if (string.IsNullOrEmpty(chunk.ChunkFilePath))

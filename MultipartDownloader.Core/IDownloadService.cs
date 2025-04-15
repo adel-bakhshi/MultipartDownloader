@@ -1,4 +1,5 @@
 ﻿using Microsoft.Extensions.Logging;
+using MultipartDownloader.Core.CustomEventArgs;
 using System.ComponentModel;
 
 namespace MultipartDownloader.Core;
@@ -55,6 +56,20 @@ public interface IDownloadService
     /// information about the download operation, such as the download URL and the local file path.
     /// </summary>
     event EventHandler<DownloadStartedEventArgs> DownloadStarted;
+
+    /// <summary>
+    /// Event that is raised periodically during the merge operation to report the progress of merging chunks.
+    /// The event handler is passed a MergeProgressChangedEventArgs object that contains
+    /// information about the merge operation, such as the merge progress.
+    /// </summary>
+    event EventHandler<MergeProgressChangedEventArgs> MergeProgressChanged;
+
+    /// <summary>
+    /// Event that is raised when the download operation is totally complete and the downloaded file is ready to be merged.
+    /// The event handler is passed a MergeStartedEventArgs object that contains
+    /// information about the merge operation, such as the local file path and the total file size.
+    /// </summary>
+    event EventHandler<MergeStartedEventArgs> MergeStarted;
 
     /// <summary>
     /// Asynchronously resume downloads a file and returns a Stream object that contains the downloaded file data.
