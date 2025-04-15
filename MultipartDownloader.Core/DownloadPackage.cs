@@ -95,15 +95,16 @@ public class DownloadPackage : IDisposable, IAsyncDisposable
     /// Builds the storage for the download package.
     /// </summary>
     /// <param name="reserveFileSize">Indicates whether to reserve the file size.</param>
-    /// <param name="maxMemoryBufferBytes">The maximum size of the memory buffer in bytes.</param>
     /// <param name="logger">The logger to use for logging.</param>
-    public void BuildStorage(bool reserveFileSize, long maxMemoryBufferBytes = 0, ILogger? logger = null)
+    public void BuildStorage(bool reserveFileSize, ILogger? logger = null)
     {
         var initSize = reserveFileSize ? TotalFileSize : 0;
 
         using var stream = new FileStream(FileName, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.ReadWrite);
         if (initSize >= 0 && stream.Length == 0)
             stream.SetLength(initSize);
+
+        logger?.LogInformation("Storage created successfully.");
     }
 
     /// <summary>

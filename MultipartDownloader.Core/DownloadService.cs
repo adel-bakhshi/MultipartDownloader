@@ -38,7 +38,7 @@ public class DownloadService : AbstractDownloadService
             Package.IsSupportDownloadInRange = await RequestInstances[0].IsSupportDownloadInRange().ConfigureAwait(false);
 
             if (forceBuildStorage || !Package.IsStorageExists())
-                Package.BuildStorage(Options.ReserveStorageSpaceBeforeStartingDownload, Options.MaximumMemoryBufferBytes);
+                Package.BuildStorage(Options.ReserveStorageSpaceBeforeStartingDownload);
 
             ValidateBeforeChunking();
             ChunkHub.SetFileChunks(Package);

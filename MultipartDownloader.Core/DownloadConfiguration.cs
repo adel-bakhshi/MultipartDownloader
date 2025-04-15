@@ -13,7 +13,6 @@ public class DownloadConfiguration : ICloneable, INotifyPropertyChanged
     private int _chunkCount = 1; // file parts to download
     private long _maximumBytesPerSecond = ThrottledStream.Infinite; // No-limitation in download speed
     private int _maximumTryAgainOnFailover = int.MaxValue; // the maximum number of times to fail.
-    private long _maximumMemoryBufferBytes;
     private bool _checkDiskSizeBeforeDownload = true; // check disk size for temp and file path
     private bool _parallelDownload; // download parts of file as parallel or not
     private int _parallelCount; // number of parallel downloads
@@ -189,25 +188,6 @@ public class DownloadConfiguration : ICloneable, INotifyPropertyChanged
     {
         get => _reserveStorageSpaceBeforeStartingDownload;
         set => OnPropertyChanged(ref _reserveStorageSpaceBeforeStartingDownload, value);
-    }
-
-    /// <summary>
-    /// Gets or sets the maximum amount of memory, in bytes, that the Downloader library is allowed
-    /// to allocate for buffering downloaded content. Once this limit is reached, the library will
-    /// stop downloading and start writing the buffered data to a file stream before continuing.
-    /// The default value for is 0, which indicates unlimited buffering.
-    /// </summary>
-    /// <example>
-    /// The following example sets the maximum memory buffer to 50 MB, causing the library to release
-    /// the memory buffer after each 50 MB of downloaded content:
-    /// <code>
-    /// MaximumMemoryBufferBytes = 1024 * 1024 * 50
-    /// </code>
-    /// </example>
-    public long MaximumMemoryBufferBytes
-    {
-        get => _maximumMemoryBufferBytes;
-        set => OnPropertyChanged(ref _maximumMemoryBufferBytes, value);
     }
 
     /// <summary>
