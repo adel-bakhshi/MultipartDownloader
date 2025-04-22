@@ -11,23 +11,27 @@ internal class Program
 
     private static async Task Main(string[] args)
     {
-        const string url = "https://dl2.soft98.ir/soft/a/AnyDesk.9.5.1.zip?1744453565";
+        //const string url = "https://dl2.soft98.ir/soft/x-y-z/Yamicsoft.Windows.Manager.2.1.4.x64.rar?1744962507";
+        const string url = "https://codeload.github.com/adel-bakhshi/MultipartDownloader/zip/refs/heads/master";
         var desktopDirectory = Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
         var configuration = new DownloadConfiguration
         {
             ChunkFilesOutputDirectory = desktopDirectory,
             ChunkCount = 8,
-            MaximumBytesPerSecond = 128 * 1024,
+            MaximumBytesPerSecond = 0 * 1024,
             ParallelDownload = true,
-            ReserveStorageSpaceBeforeStartingDownload = true
+            ReserveStorageSpaceBeforeStartingDownload = true,
+            MaximumMemoryBufferBytes = 10 * 1024 * 1024
         };
 
         var downloadService = new DownloadService(configuration);
         // Events
         downloadService.MergeStarted += DownloadServiceOnMergeStarted;
         downloadService.MergeProgressChanged += DownloadServiceOnMergeProgressChanged;
+        downloadService.DownloadFileCompleted += DownloadServiceOnDownloadFileCompleted;
+        downloadService.ChunkDownloadRestarted += DownloadServiceOnChunkDownloadRestarted;
 
-        var filePath = Path.Combine(desktopDirectory, "AnyDesk.9.5.1.zip");
+        var filePath = Path.Combine(desktopDirectory, "Yamicsoft.Windows.Manager.2.1.4.x64.rar");
         _ = downloadService.DownloadFileTaskAsync(url, filePath);
 
         while (!_isMerged)
@@ -109,5 +113,19 @@ internal class Program
     {
         Console.WriteLine(e.Progress);
         _isMerged = e.Progress >= 100;
+    }
+
+    private static void DownloadServiceOnDownloadFileCompleted(object? sender, System.ComponentModel.AsyncCompletedEventArgs e)
+    {
+        if (e.Error != null)
+            Console.WriteLine(e.Error);
+    }
+
+    private static void DownloadServiceOnChunkDownloadRestarted(object? sender, Core.CustomEventArgs.ChunkDownloadRestartedEventArgs e)
+    {
+        var currentColor = Console.ForegroundColor;
+        Console.ForegroundColor = ConsoleColor.Red;
+        Console.WriteLine($"Chunk {e.ChunkId} restarted. Reason: {e.Reason}");
+        Console.ForegroundColor = currentColor;
     }
 }

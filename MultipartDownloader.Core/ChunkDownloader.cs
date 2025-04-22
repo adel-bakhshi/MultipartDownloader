@@ -1,20 +1,27 @@
 ﻿using Microsoft.Extensions.Logging;
+using MultipartDownloader.Core.CustomEventArgs;
+using MultipartDownloader.Core.Enums;
 using MultipartDownloader.Core.Extensions.Helpers;
 using System.ComponentModel;
+using System.Drawing;
 using System.Net;
 
 namespace MultipartDownloader.Core;
 
 internal class ChunkDownloader
 {
+    private const string FileSizeNotMatch = "The file size does not match the downloaded size.";
+
     private readonly ILogger? _logger;
     private readonly DownloadConfiguration _configuration;
     private readonly int _timeoutIncrement = 10;
     private ThrottledStream _sourceStream;
+    private MemoryBufferedStream? _storage;
 
     internal Chunk Chunk { get; set; }
 
     public event EventHandler<CustomEventArgs.DownloadProgressChangedEventArgs>? DownloadProgressChanged;
+    public event EventHandler<ChunkDownloadRestartedEventArgs>? DownloadRestarted;
 
     public ChunkDownloader(Chunk chunk, DownloadConfiguration config, ILogger? logger = null)
     {
@@ -27,10 +34,13 @@ internal class ChunkDownloader
     private void ConfigurationPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
         _logger?.LogDebug($"Changed configuration {e.PropertyName} property");
+        // Change maximum speed per second value
         if (e.PropertyName is nameof(_configuration.MaximumBytesPerSecond) or nameof(_configuration.ActiveChunks) && _sourceStream?.CanRead == true)
-        {
             _sourceStream.BandwidthLimit = _configuration.MaximumSpeedPerChunk;
-        }
+
+        // Change maximum memory buffer bytes value
+        if (e.PropertyName is nameof(_configuration.MaximumMemoryBufferBytes) or nameof(_configuration.ActiveChunks) && _storage != null)
+            _storage.MaxMemoryBuffer = _configuration.MaximumMemoryBufferBytesPerChunk;
     }
 
     public async Task<Chunk> Download(Request downloadRequest, PauseToken pause, CancellationToken cancelToken)
@@ -54,6 +64,14 @@ internal class ChunkDownloader
         catch (Exception error) when (Chunk.CanTryAgainOnFailover() && error.IsMomentumError())
         {
             _logger?.LogError(error, $"Error on download chunk {Chunk.Id} with retry");
+            return await ContinueWithDelay(downloadRequest, pause, cancelToken).ConfigureAwait(false);
+        }
+        catch (InvalidOperationException error) when (error.Message.Equals(FileSizeNotMatch, StringComparison.OrdinalIgnoreCase))
+        {
+            _logger?.LogError(error, $"File size not match with chunk length for chunk {Chunk.Id} with retry");
+            // TODO: Should I have to clear chunk and download this chunk again?
+            Chunk.Clear();
+            OnDownloadRestarted(RestartReason.FileSizeIsNotMatchWithChunkLength);
             return await ContinueWithDelay(downloadRequest, pause, cancelToken).ConfigureAwait(false);
         }
         catch (Exception error)
@@ -88,7 +106,7 @@ internal class ChunkDownloader
         {
             HttpWebRequest request = downloadRequest.GetRequest();
             SetRequestRange(request);
-            using HttpWebResponse downloadResponse = (await request.GetResponseAsync() as HttpWebResponse)!;
+            using var downloadResponse = await request.GetResponseAsync().ConfigureAwait(false) as HttpWebResponse;
             if (downloadResponse?.StatusCode == HttpStatusCode.OK ||
                 downloadResponse?.StatusCode == HttpStatusCode.PartialContent ||
                 downloadResponse?.StatusCode == HttpStatusCode.Created ||
@@ -134,15 +152,16 @@ internal class ChunkDownloader
             // close stream on cancellation because, it doesn't work on .Net Framework
             await using CancellationTokenRegistration _ = cancelToken.Register(stream.Close);
             // Open or create temp stream for saving chunk data
-            await using var storage = new FileStream(Chunk.ChunkFilePath, FileMode.OpenOrCreate, FileAccess.Write, FileShare.ReadWrite);
+            _storage = new MemoryBufferedStream(Chunk.ChunkFilePath, _configuration.MaximumMemoryBufferBytesPerChunk, Chunk.FilePosition);
+
             // Sync storage with chunk position
-            if (storage.Length > Chunk.Position)
+            if (_storage.Length > Chunk.Position)
             {
-                storage.SetLength(Chunk.Position);
+                _storage.SetLength(Chunk.Position);
             }
-            else if (storage.Length < Chunk.Position)
+            else if (_storage.Length < Chunk.Position)
             {
-                storage.SetLength(0);
+                _storage.SetLength(0);
                 Chunk.Position = 0;
             }
 
@@ -164,11 +183,12 @@ internal class ChunkDownloader
                 readSize = (int)Math.Min(Chunk.EmptyLength, readSize);
                 if (readSize > 0)
                 {
-                    storage.Seek(Chunk.Position, SeekOrigin.Begin);
-                    await storage.WriteAsync(buffer.AsMemory(0, readSize), CancellationToken.None).ConfigureAwait(false);
+                    _storage!.Seek(Chunk.Position, SeekOrigin.Begin);
+                    await _storage.WriteAsync(buffer.AsMemory(0, readSize), cancelToken).ConfigureAwait(false);
 
                     _logger?.LogDebug($"Write {readSize}bytes in the chunk {Chunk.Id}");
                     Chunk.Position += readSize;
+                    Chunk.FilePosition = _storage?.Position ?? Chunk.FilePosition;
                     _logger?.LogDebug($"The chunk {Chunk.Id} current position is: {Chunk.Position} of {Chunk.Length}");
 
                     OnDownloadProgressChanged(new CustomEventArgs.DownloadProgressChangedEventArgs(Chunk.Id)
@@ -181,10 +201,12 @@ internal class ChunkDownloader
                 }
             }
 
-            if (storage?.Length != Chunk.Length)
-                throw new InvalidOperationException("The file size does not match the downloaded size.");
+            // Flush storage and update file position for last time
+            if (_storage!.MemoryLength > 0)
+                Chunk.FilePosition = await FlushStorageAsync(dispose: false).ConfigureAwait(false);
 
-            await (storage?.FlushAsync(CancellationToken.None) ?? Task.FromResult(true)).ConfigureAwait(false);
+            // Compare file size with chunk length and throw exception if not match
+            ThrowIfFileSizeNotMatchWithChunkLength();
         }
         catch (ObjectDisposedException exp) // When closing stream manually, ObjectDisposedException will be thrown
         {
@@ -198,12 +220,71 @@ internal class ChunkDownloader
 
             throw; // throw origin stack trace of exception
         }
+        finally
+        {
+            // Flush storage and dispose it
+            // Update file position
+            Chunk.FilePosition = await FlushStorageAsync(dispose: true).ConfigureAwait(false);
+        }
 
         _logger?.LogDebug($"ReadStream of the chunk {Chunk.Id} completed successfully");
     }
+
+    #region Helpers
 
     private void OnDownloadProgressChanged(CustomEventArgs.DownloadProgressChangedEventArgs e)
     {
         DownloadProgressChanged?.Invoke(this, e);
     }
+
+    private void OnDownloadRestarted(RestartReason reason)
+    {
+        DownloadRestarted?.Invoke(this, new ChunkDownloadRestartedEventArgs(Chunk.Id, reason));
+    }
+
+    private async Task<long> FlushStorageAsync(bool dispose)
+    {
+        if (_storage == null)
+            return 0;
+
+        long position;
+        // Dispose storage
+        if (dispose)
+        {
+            // Disposing storage, like flushing it, writes the remaining data in RAM to the hard drive.
+            // Refer to MemoryBufferedStream class.
+            await _storage.DisposeAsync().ConfigureAwait(false);
+            // Get file position from storage
+            position = _storage.Position;
+            _storage = null;
+        }
+        // Flush storage
+        else
+        {
+            // Write last bytes received from server to the disk.
+            // Refer to MemoryBufferedStream class.
+            await _storage.FlushAsync(CancellationToken.None).ConfigureAwait(false);
+            // Get file position from storage
+            position = _storage.Position;
+        }
+
+        // Log information
+        _logger?.LogDebug($"Chunk {Chunk.Id} flushed to disk");
+        return position;
+    }
+
+    /// <summary>
+    /// Compare file size with chunk length and make sure file size is equal to chunk length
+    /// </summary>
+    /// <exception cref="InvalidOperationException">If file size not match with chunk length</exception>
+    private void ThrowIfFileSizeNotMatchWithChunkLength()
+    {
+        // If the chunk has a length, the file size should be compared to the chunk length
+        // Otherwise, the file size should be compared to the chunk position
+        var chunkLength = Chunk.Length > 0 ? Chunk.Length : Chunk.Position;
+        if (_storage?.Length != chunkLength)
+            throw new InvalidOperationException(FileSizeNotMatch);
+    }
+
+    #endregion Helpers
 }

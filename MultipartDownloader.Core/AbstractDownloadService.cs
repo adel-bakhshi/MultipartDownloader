@@ -111,14 +111,19 @@ public abstract class AbstractDownloadService : IDownloadService, IDisposable, I
     public event EventHandler<DownloadStartedEventArgs> DownloadStarted;
 
     /// <summary>
+    /// Event triggered when the merge operation starts.
+    /// </summary>
+    public event EventHandler<MergeStartedEventArgs> MergeStarted;
+
+    /// <summary>
     /// Event triggered when the merge operation progress changed.
     /// </summary>
     public event EventHandler<MergeProgressChangedEventArgs> MergeProgressChanged;
 
     /// <summary>
-    /// Event triggered when the merge operation starts.
+    /// Event triggered when a chunk starts downloading again from the beginning for some reason.
     /// </summary>
-    public event EventHandler<MergeStartedEventArgs> MergeStarted;
+    public event EventHandler<ChunkDownloadRestartedEventArgs> ChunkDownloadRestarted;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="AbstractDownloadService"/> class with the specified options.
@@ -465,15 +470,6 @@ public abstract class AbstractDownloadService : IDownloadService, IDisposable, I
     }
 
     /// <summary>
-    /// Raises the <see cref="MergeProgressChanged"/> event.
-    /// </summary>
-    /// <param name="e">The event arguments for the merge progress changed event.</param>
-    protected void OnMergeProgressChanged(MergeProgressChangedEventArgs e)
-    {
-        MergeProgressChanged?.Invoke(this, e);
-    }
-
-    /// <summary>
     /// Raises the <see cref="MergeStarted"/> event.
     /// </summary>
     protected void OnMergeStarted()
@@ -483,6 +479,25 @@ public abstract class AbstractDownloadService : IDownloadService, IDisposable, I
         var chunksDirectoryPath = Package.Chunks.Length > 1 ? (Path.GetDirectoryName(Package.Chunks[0].ChunkFilePath) ?? string.Empty) : string.Empty;
         var eventArgs = new MergeStartedEventArgs(totalFileSize, numberOfChunks, chunksDirectoryPath);
         MergeStarted?.Invoke(this, eventArgs);
+    }
+
+    /// <summary>
+    /// Raises the <see cref="MergeProgressChanged"/> event.
+    /// </summary>
+    /// <param name="e">The event arguments for the merge progress changed event.</param>
+    protected void OnMergeProgressChanged(MergeProgressChangedEventArgs e)
+    {
+        MergeProgressChanged?.Invoke(this, e);
+    }
+
+    /// <summary>
+    /// Raises the <see cref="ChunkDownloadRestarted"/> event.
+    /// </summary>
+    /// <param name="sender">The sender of the event.</param>
+    /// <param name="e">The event arguments for the chunk download restarted event.</param>
+    protected void OnChunkDownloadRestarted(object? sender, ChunkDownloadRestartedEventArgs e)
+    {
+        ChunkDownloadRestarted?.Invoke(this, e);
     }
 
     /// <summary>

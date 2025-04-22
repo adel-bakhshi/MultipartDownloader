@@ -13,6 +13,7 @@ public class DownloadConfiguration : ICloneable, INotifyPropertyChanged
     private int _chunkCount = 1; // file parts to download
     private long _maximumBytesPerSecond = ThrottledStream.Infinite; // No-limitation in download speed
     private int _maximumTryAgainOnFailover = int.MaxValue; // the maximum number of times to fail.
+    private long _maximumMemoryBufferBytes; // The maximum memory buffer length before write data to disk
     private bool _checkDiskSizeBeforeDownload = true; // check disk size for temp and file path
     private bool _parallelDownload; // download parts of file as parallel or not
     private int _parallelCount; // number of parallel downloads
@@ -191,6 +192,32 @@ public class DownloadConfiguration : ICloneable, INotifyPropertyChanged
     }
 
     /// <summary>
+    /// Gets or sets the maximum amount of memory, in bytes, that the Downloader library is allowed
+    /// to allocate for buffering downloaded content. Once this limit is reached, the library will
+    /// stop downloading and start writing the buffered data to a file stream before continuing.
+    /// The default value for is 0, which indicates unlimited buffering.
+    /// </summary>
+    /// <example>
+    /// The following example sets the maximum memory buffer to 50 MB, causing the library to release
+    /// the memory buffer after each 50 MB of downloaded content:
+    /// <code>
+    /// MaximumMemoryBufferBytes = 1024 * 1024 * 50
+    /// </code>
+    /// </example>
+    public long MaximumMemoryBufferBytes
+    {
+        get => _maximumMemoryBufferBytes;
+        set => OnPropertyChanged(ref _maximumMemoryBufferBytes, value);
+    }
+
+    /// <summary>
+    /// Gets the maximum memory buffer bytes per chunk through download chunk.
+    /// This property indicates how many bytes can be saved in memory before write on disk operation.
+    /// This property is read-only.
+    /// </summary>
+    public long MaximumMemoryBufferBytesPerChunk => GetMaximumMemoryBufferBytesPerChunk();
+
+    /// <summary>
     /// Gets or sets a value indicating whether live-streaming is enabled or not. If it's enabled, get the on-demand downloaded data
     /// with ReceivedBytes on the downloadProgressChanged event.
     /// Note: This option may consume more memory because it copies each block of downloaded data into ReceivedBytes.
@@ -201,6 +228,9 @@ public class DownloadConfiguration : ICloneable, INotifyPropertyChanged
         set => OnPropertyChanged(ref _enableLiveStreaming, value);
     }
 
+    /// <summary>
+    /// Gets or sets the directory to store downloaded data for each chunk for merging at the end of the download.
+    /// </summary>
     public string ChunkFilesOutputDirectory
     {
         get => _chunkFilesOutputDirectory;
@@ -215,4 +245,22 @@ public class DownloadConfiguration : ICloneable, INotifyPropertyChanged
     {
         return MemberwiseClone();
     }
+
+    #region Helpers
+
+    /// <summary>
+    /// Gets the maximum memory buffer bytes per chunk.
+    /// </summary>
+    /// <returns>The maximum memory buffer bytes per chunk. </returns>
+    private long GetMaximumMemoryBufferBytesPerChunk()
+    {
+        if (MaximumMemoryBufferBytes <= 0)
+            return 0;
+
+        return ParallelDownload
+            ? MaximumMemoryBufferBytes / Math.Max(Math.Min(Math.Min(ChunkCount, ParallelCount), ActiveChunks), 1)
+            : MaximumMemoryBufferBytes;
+    }
+
+    #endregion Helpers
 }

@@ -88,6 +88,14 @@ public class DownloadPackage : IDisposable, IAsyncDisposable
 
             if (!IsSupportDownloadInRange)
                 chunk.Clear();
+
+            // When a download is canceled or an error occurs during the download, some of the file may have been downloaded but not saved to disk.
+            // This is especially true if the MaximumMemoryBufferBytes property value is greater than 0.
+            // In this case, the Chunk Position is greater than the File Position (because the downloaded data has not been saved to disk),
+            // and if the download continues from the same Chunk Position, part of the file will be lost and the final file will be corrupted.
+            // To fix this problem, we must check before downloading that the Chunk Position is not greater than the File Position.
+            if (chunk.Position > chunk.FilePosition)
+                chunk.Position = chunk.FilePosition;
         }
     }
 

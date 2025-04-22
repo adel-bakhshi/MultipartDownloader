@@ -6,6 +6,11 @@
 public class Chunk
 {
     /// <summary>
+    /// Default value for Timeout property
+    /// </summary>
+    private const int DefaultTimeout = 1000;
+
+    /// <summary>
     /// Gets or sets the unique identifier for the chunk.
     /// </summary>
     public string Id { get; set; }
@@ -24,6 +29,11 @@ public class Chunk
     /// Gets or sets the current write offset of the chunk.
     /// </summary>
     public long Position { get; set; }
+
+    /// <summary>
+    /// Gets or sets the current file position of the chunk.
+    /// </summary>
+    public long FilePosition { get; set; }
 
     /// <summary>
     /// Gets or sets the maximum number of times to try again after an error.
@@ -69,7 +79,7 @@ public class Chunk
     /// </summary>
     public Chunk()
     {
-        Timeout = 1000;
+        Timeout = DefaultTimeout;
         Id = Guid.NewGuid().ToString("N");
     }
 
@@ -99,7 +109,9 @@ public class Chunk
     public void Clear()
     {
         Position = 0;
+        FilePosition = 0;
         FailoverCount = 0;
+        Timeout = DefaultTimeout;
     }
 
     /// <summary>

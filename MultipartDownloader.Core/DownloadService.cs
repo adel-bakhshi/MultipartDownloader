@@ -10,6 +10,12 @@ namespace MultipartDownloader.Core;
 /// </summary>
 public class DownloadService : AbstractDownloadService
 {
+    #region Private fields
+
+    private long _mergePosition;
+
+    #endregion Private fields
+
     /// <summary>
     /// Initializes a new instance of the <see cref="DownloadService"/> class with the specified options.
     /// </summary>
@@ -82,6 +88,8 @@ public class DownloadService : AbstractDownloadService
         if (Package.Chunks.Length == 0)
             return;
 
+        // Reset merge position
+        _mergePosition = 0;
         // Raise merge started event
         OnMergeStarted();
 
@@ -117,8 +125,6 @@ public class DownloadService : AbstractDownloadService
             }
         }
     }
-
-    private long _mergePosition;
 
     private async Task MergeFileWithProgressAsync(Stream finalStrem, Chunk chunk)
     {
@@ -339,6 +345,7 @@ public class DownloadService : AbstractDownloadService
     {
         ChunkDownloader chunkDownloader = GetChunkDownloader(chunk);
         chunkDownloader.DownloadProgressChanged += OnChunkDownloadProgressChanged;
+        chunkDownloader.DownloadRestarted += OnChunkDownloadRestarted;
         await ParallelSemaphore.WaitAsync(cancellationTokenSource.Token).ConfigureAwait(false);
         try
         {
