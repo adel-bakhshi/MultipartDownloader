@@ -6,7 +6,7 @@ public class ChunkDownloadRestartedEventArgs : EventArgs
 {
     #region Properties
 
-    public string ChunkId { get; set; } = string.Empty;
+    public string ChunkId { get; set; }
     public RestartReason Reason { get; set; }
 
     #endregion Properties

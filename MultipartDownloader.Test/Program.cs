@@ -11,8 +11,7 @@ internal class Program
 
     private static async Task Main(string[] args)
     {
-        //const string url = "https://dl2.soft98.ir/soft/x-y-z/Yamicsoft.Windows.Manager.2.1.4.x64.rar?1744962507";
-        const string url = "https://codeload.github.com/adel-bakhshi/MultipartDownloader/zip/refs/heads/master";
+        const string url = "https://dl2.soft98.ir/soft/x-y-z/Yamicsoft.Windows.Manager.2.1.4.x64.rar?1744962507";
         var desktopDirectory = Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
         var configuration = new DownloadConfiguration
         {

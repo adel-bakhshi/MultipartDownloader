@@ -3,7 +3,6 @@ using MultipartDownloader.Core.CustomEventArgs;
 using MultipartDownloader.Core.Enums;
 using MultipartDownloader.Core.Extensions.Helpers;
 using System.ComponentModel;
-using System.Drawing;
 using System.Net;
 
 namespace MultipartDownloader.Core;
@@ -15,12 +14,13 @@ internal class ChunkDownloader
     private readonly ILogger? _logger;
     private readonly DownloadConfiguration _configuration;
     private readonly int _timeoutIncrement = 10;
-    private ThrottledStream _sourceStream;
+    private ThrottledStream? _sourceStream;
     private MemoryBufferedStream? _storage;
 
     internal Chunk Chunk { get; set; }
 
     public event EventHandler<CustomEventArgs.DownloadProgressChangedEventArgs>? DownloadProgressChanged;
+
     public event EventHandler<ChunkDownloadRestartedEventArgs>? DownloadRestarted;
 
     public ChunkDownloader(Chunk chunk, DownloadConfiguration config, ILogger? logger = null)
@@ -61,17 +61,17 @@ internal class ChunkDownloader
             _logger?.LogError(error, $"Disposed object error on download chunk {Chunk.Id} with retry");
             return await ContinueWithDelay(downloadRequest, pause, cancelToken).ConfigureAwait(false);
         }
-        catch (Exception error) when (Chunk.CanTryAgainOnFailover() && error.IsMomentumError())
-        {
-            _logger?.LogError(error, $"Error on download chunk {Chunk.Id} with retry");
-            return await ContinueWithDelay(downloadRequest, pause, cancelToken).ConfigureAwait(false);
-        }
-        catch (InvalidOperationException error) when (error.Message.Equals(FileSizeNotMatch, StringComparison.OrdinalIgnoreCase))
+        catch (InvalidOperationException error) when (error.Message.Equals(FileSizeNotMatch, StringComparison.OrdinalIgnoreCase)) // when file size in not match with chunk length
         {
             _logger?.LogError(error, $"File size not match with chunk length for chunk {Chunk.Id} with retry");
             // TODO: Should I have to clear chunk and download this chunk again?
             Chunk.Clear();
             OnDownloadRestarted(RestartReason.FileSizeIsNotMatchWithChunkLength);
+            return await ContinueWithDelay(downloadRequest, pause, cancelToken).ConfigureAwait(false);
+        }
+        catch (Exception error) when (Chunk.CanTryAgainOnFailover() && error.IsMomentumError())
+        {
+            _logger?.LogError(error, $"Error on download chunk {Chunk.Id} with retry");
             return await ContinueWithDelay(downloadRequest, pause, cancelToken).ConfigureAwait(false);
         }
         catch (Exception error)
@@ -104,6 +104,11 @@ internal class ChunkDownloader
         _logger?.LogDebug($"DownloadChunk of the chunk {Chunk.Id}");
         if (!Chunk.IsDownloadCompleted())
         {
+            // Open or create temp stream for saving chunk data
+            _storage = new MemoryBufferedStream(Chunk.ChunkFilePath, _configuration.MaximumMemoryBufferBytesPerChunk, Chunk.FilePosition);
+            // Sync storage with chunk position
+            SyncPositionWithStorage();
+
             HttpWebRequest request = downloadRequest.GetRequest();
             SetRequestRange(request);
             using var downloadResponse = await request.GetResponseAsync().ConfigureAwait(false) as HttpWebResponse;
@@ -151,19 +156,6 @@ internal class ChunkDownloader
         {
             // close stream on cancellation because, it doesn't work on .Net Framework
             await using CancellationTokenRegistration _ = cancelToken.Register(stream.Close);
-            // Open or create temp stream for saving chunk data
-            _storage = new MemoryBufferedStream(Chunk.ChunkFilePath, _configuration.MaximumMemoryBufferBytesPerChunk, Chunk.FilePosition);
-
-            // Sync storage with chunk position
-            if (_storage.Length > Chunk.Position)
-            {
-                _storage.SetLength(Chunk.Position);
-            }
-            else if (_storage.Length < Chunk.Position)
-            {
-                _storage.SetLength(0);
-                Chunk.Position = 0;
-            }
 
             while (readSize > 0 && Chunk.CanWrite)
             {
@@ -183,12 +175,11 @@ internal class ChunkDownloader
                 readSize = (int)Math.Min(Chunk.EmptyLength, readSize);
                 if (readSize > 0)
                 {
-                    _storage!.Seek(Chunk.Position, SeekOrigin.Begin);
-                    await _storage.WriteAsync(buffer.AsMemory(0, readSize), cancelToken).ConfigureAwait(false);
+                    await _storage!.WriteAsync(buffer, 0, readSize, cancelToken).ConfigureAwait(false);
 
                     _logger?.LogDebug($"Write {readSize}bytes in the chunk {Chunk.Id}");
                     Chunk.Position += readSize;
-                    Chunk.FilePosition = _storage?.Position ?? Chunk.FilePosition;
+                    Chunk.FilePosition = _storage.Position;
                     _logger?.LogDebug($"The chunk {Chunk.Id} current position is: {Chunk.Position} of {Chunk.Length}");
 
                     OnDownloadProgressChanged(new CustomEventArgs.DownloadProgressChangedEventArgs(Chunk.Id)
@@ -231,6 +222,36 @@ internal class ChunkDownloader
     }
 
     #region Helpers
+
+    private void SyncPositionWithStorage()
+    {
+        if (_storage == null)
+            return;
+
+        // When the length of storage is greater than the chunk position and less than or equal to the chunk length
+        // or when the length of storage is less than the chunk position
+        // Change chunk position and file position based on the length of storage
+        if ((_storage.Length > Chunk.Position && _storage.Length <= Chunk.Length) || (_storage.Length < Chunk.Position))
+        {
+            var length = _storage.Length >= _configuration.BufferBlockSize ? _storage.Length - _configuration.BufferBlockSize : 0;
+            _storage.Seek(length, SeekOrigin.Begin);
+            Chunk.Position = Chunk.FilePosition = length;
+        }
+        // When the length of storage is greater than the chunk position and greater than the chunk length
+        // maybe file is corrupted and download must start from the beginning
+        else if (_storage.Length > Chunk.Position && _storage.Length > Chunk.Length)
+        {
+            // Remove all data stored in file
+            _storage.SetLength(0);
+            _storage.Seek(0, SeekOrigin.Begin);
+            // If Position is greater than 0 (i.e. the download has not yet started), restart the Chunk download.
+            if (Chunk.Position > 0)
+                OnDownloadRestarted(RestartReason.TempFileCorruption);
+
+            // Clear chunk data for re-downloading
+            Chunk.Clear();
+        }
+    }
 
     private void OnDownloadProgressChanged(CustomEventArgs.DownloadProgressChangedEventArgs e)
     {

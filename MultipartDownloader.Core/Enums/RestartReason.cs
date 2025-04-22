@@ -2,5 +2,13 @@
 
 public enum RestartReason : byte
 {
-    FileSizeIsNotMatchWithChunkLength = 0
+    /// <summary>
+    /// The file size is not match with the chunk length.
+    /// </summary>
+    FileSizeIsNotMatchWithChunkLength = 0,
+
+    /// <summary>
+    /// The file size is greater than the chunk length.
+    /// </summary>
+    TempFileCorruption
 }

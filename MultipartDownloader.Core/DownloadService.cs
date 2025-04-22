@@ -109,6 +109,9 @@ public class DownloadService : AbstractDownloadService
         if (finalStream.Length != Package.TotalFileSize)
             throw new InvalidOperationException($"Final file size mismatch! Expected: {Package.TotalFileSize} bytes, Actual: {finalStream.Length} bytes");
 
+        // Make sure merge progress changed raised
+        SendMergeProgressChangedSignal(finalStream.Length, Package.TotalFileSize);
+
         // Remove temporary files
         for (var i = 0; i < sortedChunks.Count; i++)
         {

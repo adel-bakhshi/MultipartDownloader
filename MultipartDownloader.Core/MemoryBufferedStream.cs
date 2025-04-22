@@ -1,6 +1,6 @@
 ﻿namespace MultipartDownloader.Core;
 
-public class MemoryBufferedStream : Stream
+public class MemoryBufferedStream
 {
     #region Private fields
 
@@ -16,23 +16,15 @@ public class MemoryBufferedStream : Stream
 
     #region Properties
 
-    public override bool CanRead => _baseStream.CanRead;
+    public bool CanRead => _baseStream.CanRead;
 
-    public override bool CanSeek => _baseStream.CanSeek;
+    public bool CanSeek => _baseStream.CanSeek;
 
-    public override bool CanWrite => _baseStream.CanWrite;
+    public bool CanWrite => _baseStream.CanWrite;
 
-    public override long Length => _baseStream.Length;
+    public long Length => _baseStream.Length;
 
-    public override long Position
-    {
-        get => _filePosition;
-        set
-        {
-            _filePosition = value < 0 ? 0 : value;
-            _baseStream.Seek(_filePosition, SeekOrigin.Begin);
-        }
-    }
+    public long Position => _filePosition;
 
     public long MemoryLength => _memoryPackets.Sum(p => p.Length);
 
@@ -65,7 +57,7 @@ public class MemoryBufferedStream : Stream
         MaxMemoryBuffer = maxMemoryBuffer;
     }
 
-    public override async Task FlushAsync(CancellationToken cancellationToken)
+    public async Task FlushAsync(CancellationToken cancellationToken)
     {
         try
         {
@@ -82,37 +74,45 @@ public class MemoryBufferedStream : Stream
         }
     }
 
-    public override void Flush()
+    public long Seek(long offset, SeekOrigin origin)
     {
-        FlushAsync(CancellationToken.None).GetAwaiter().GetResult();
+        // Check file position
+        _filePosition = offset;
+        return _baseStream.Seek(_filePosition, origin);
     }
 
-    public override int Read(byte[] buffer, int offset, int count)
+    public void SetLength(long value)
     {
-        return _baseStream.Read(buffer, offset, count);
-    }
+        // Check file position
+        if (_filePosition > value)
+            _filePosition = value;
 
-    public override long Seek(long offset, SeekOrigin origin)
-    {
-        return _baseStream.Seek(offset, origin);
-    }
-
-    public override void SetLength(long value)
-    {
         _baseStream.SetLength(value);
     }
 
-    public override async Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
+    public async Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
     {
         try
         {
             // Wait for write operation to finish
             await _writeSemaphore.WaitAsync(cancellationToken).ConfigureAwait(false);
-            // Write data to memory
-            _memoryPackets.Enqueue(new Packet(buffer, offset, count));
-            // Check for memory limit size
-            if (MemoryLength >= MaxMemoryBuffer)
-                await WriteToDiskAsync(cancellationToken).ConfigureAwait(false);
+            // Create packet
+            var packet = new Packet(buffer, offset, count);
+            // If there is no memory limit, write the packet directly to disk.
+            if (MaxMemoryBuffer == 0)
+            {
+                // Write packet
+                await WritePacketAsync(packet, cancellationToken).ConfigureAwait(false);
+            }
+            // Otherwise, we wait until the memory limit is reached and then write the values ​​to disk.
+            else
+            {
+                // Write data to memory
+                _memoryPackets.Enqueue(packet);
+                // Check for memory limit size
+                if (MemoryLength >= MaxMemoryBuffer)
+                    await WriteToDiskAsync(cancellationToken).ConfigureAwait(false);
+            }
         }
         finally
         {
@@ -120,19 +120,14 @@ public class MemoryBufferedStream : Stream
         }
     }
 
-    public override void Write(byte[] buffer, int offset, int count)
-    {
-        WriteAsync(buffer, offset, count, CancellationToken.None).GetAwaiter().GetResult();
-    }
-
-    public override async ValueTask DisposeAsync()
+    public async ValueTask DisposeAsync()
     {
         if (_disposed)
             return;
 
         try
         {
-            await _writeSemaphore.WaitAsync();
+            await _writeSemaphore.WaitAsync().ConfigureAwait(false);
 
             await WriteToDiskAsync(CancellationToken.None).ConfigureAwait(false);
             await _baseStream.DisposeAsync().ConfigureAwait(false);
@@ -144,31 +139,6 @@ public class MemoryBufferedStream : Stream
             _writeSemaphore.Release();
             _writeSemaphore.Dispose();
         }
-
-        await base.DisposeAsync();
-    }
-
-    protected override void Dispose(bool disposing)
-    {
-        if (disposing && !_disposed)
-        {
-            try
-            {
-                _writeSemaphore.Wait();
-
-                WriteToDiskAsync(CancellationToken.None).GetAwaiter().GetResult();
-                _baseStream.Dispose();
-                _memoryPackets.Clear();
-                _disposed = true;
-            }
-            finally
-            {
-                _writeSemaphore.Release();
-                _writeSemaphore.Dispose();
-            }
-        }
-
-        base.Dispose(disposing);
     }
 
     #region Helpers
@@ -187,13 +157,19 @@ public class MemoryBufferedStream : Stream
         {
             // Get first item from queue
             var packet = _memoryPackets.Dequeue();
-            // Write data to disk
-            await _baseStream.WriteAsync(packet.Data, cancellationToken).ConfigureAwait(false);
-            // Update file position
-            _filePosition += packet.Length;
-            // Clear packet
-            packet.Clear();
+            // Write packet
+            await WritePacketAsync(packet, cancellationToken).ConfigureAwait(false);
         }
+    }
+
+    private async Task WritePacketAsync(Packet packet, CancellationToken cancellationToken = default)
+    {
+        // Write data to disk
+        await _baseStream.WriteAsync(packet.Data, cancellationToken).ConfigureAwait(false);
+        // Update file position
+        _filePosition += packet.Length;
+        // Clear packet
+        packet.Clear();
     }
 
     #endregion Helpers
