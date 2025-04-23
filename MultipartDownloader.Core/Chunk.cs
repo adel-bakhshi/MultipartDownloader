@@ -75,6 +75,16 @@ public class Chunk
     public string TempFilePath { get; set; } = string.Empty;
 
     /// <summary>
+    /// Gets or sets the maximum number of times to restart the download of the chunk without clearing temp file data.
+    /// </summary>
+    public int MaxRestartWithoutClearTempFile { get; set; }
+
+    /// <summary>
+    /// Gets the number of times the download of the chunk has been restarted without clearing temp file data.
+    /// </summary>
+    public int RestartCount { get; private set; }
+
+    /// <summary>
     /// Initializes a new instance of the <see cref="Chunk"/> class with default values.
     /// </summary>
     public Chunk()
@@ -111,6 +121,7 @@ public class Chunk
         Position = 0;
         FilePosition = 0;
         FailoverCount = 0;
+        RestartCount = 0;
         Timeout = DefaultTimeout;
     }
 
@@ -140,10 +151,24 @@ public class Chunk
     /// </summary>
     public void ClearTempFile()
     {
+        // Make sure file exists
         if (!File.Exists(TempFilePath))
             return;
 
+        // Clear file
         using var stream = File.OpenWrite(TempFilePath);
         stream.SetLength(0);
+
+        // Reset restart count
+        RestartCount = 0;
+    }
+
+    /// <summary>
+    /// Determines whether the chunk can be restarted without clearing the temporary file.
+    /// </summary>
+    /// <returns>True if the temporary file can be cleared; otherwise, false.</returns>
+    public bool CanRestartWithoutClearTempFile()
+    {
+        return RestartCount++ < MaxRestartWithoutClearTempFile;
     }
 }

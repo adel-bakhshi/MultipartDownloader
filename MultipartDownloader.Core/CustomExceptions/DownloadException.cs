@@ -9,6 +9,11 @@ public class DownloadException : Exception
     /// </summary>
     internal const int FileSizeNotMatchWithChunkLength = 0;
 
+    /// <summary>
+    /// Use this code when the chunk files directory is not valid
+    /// </summary>
+    internal const int ChunkFilesDirectoryIsNotValid = 1;
+
     #endregion Error codes
 
     #region Properties
@@ -68,7 +73,8 @@ public class DownloadException : Exception
     {
         return new Dictionary<int, string>
         {
-            [FileSizeNotMatchWithChunkLength] = "The file size does not match the downloaded size."
+            [FileSizeNotMatchWithChunkLength] = "The file size does not match the downloaded size.",
+            [ChunkFilesDirectoryIsNotValid] = "The chunk files directory is not valid.",
         };
     }
 

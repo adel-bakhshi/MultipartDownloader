@@ -27,6 +27,7 @@ public class DownloadConfiguration : ICloneable, INotifyPropertyChanged
     private bool _enableLiveStreaming; // Get on demand downloaded data with ReceivedBytes on downloadProgressChanged event
     private string _chunkFilesOutputDirectory = string.Empty; // Directory to store downloaded data for each chunk for merging at the end of the download
     private string _chunkFilesFinalPath = string.Empty; // Final directory to store downloaded data for each chunk
+    private int _maximumRestartWithoutClearTempFile = int.MaxValue; // The maximum number of times to restart the download without clearing the temporary files.
 
     /// <summary>
     /// To bind view models to fire changes in MVVM pattern
@@ -242,6 +243,12 @@ public class DownloadConfiguration : ICloneable, INotifyPropertyChanged
     /// Gets the final directory path to store downloaded data for each chunk.
     /// </summary>
     public string ChunkFilesFinalPath => _chunkFilesFinalPath;
+
+    public int MaxRestartWithoutClearTempFile
+    {
+        get => _maximumRestartWithoutClearTempFile;
+        set => OnPropertyChanged(ref _maximumRestartWithoutClearTempFile, value);
+    }
 
     /// <summary>
     /// Creates a shallow copy of the current object.

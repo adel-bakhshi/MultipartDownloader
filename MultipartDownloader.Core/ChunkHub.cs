@@ -83,7 +83,8 @@ public class ChunkHub
         {
             Id = id,
             MaxTryAgainOnFailover = _config.MaxTryAgainOnFailover,
-            Timeout = _config.Timeout
+            Timeout = _config.Timeout,
+            MaxRestartWithoutClearTempFile = _config.MaxRestartWithoutClearTempFile
         };
     }
 }

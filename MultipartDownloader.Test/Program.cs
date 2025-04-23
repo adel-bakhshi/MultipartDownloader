@@ -11,12 +11,12 @@ internal class Program
 
     private static async Task Main(string[] args)
     {
-        const string url = "https://dl2.soft98.ir/soft/u-v/Visual.Studio.Code.1.99.3.x64.rar?1745392154";
+        const string url = "https://dl2.soft98.ir/soft/w/Wondershare.UniConverter.16.4.6.219.x64.rar?1745411520";
         var desktopDirectory = Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
         var configuration = GetDownloadConfiguration(desktopDirectory);
         var downloadService = GetDownloadService(configuration);
 
-        var filePath = Path.Combine(desktopDirectory, "Visual.Studio.Code.1.99.3.x64.rar");
+        var filePath = Path.Combine(desktopDirectory, "Wondershare.UniConverter.16.4.6.219.x64.rar");
         _ = downloadService.DownloadFileTaskAsync(url, filePath);
 
         while (!_isMerged)
@@ -97,7 +97,8 @@ internal class Program
             MaximumBytesPerSecond = 0 * 1024,
             ParallelDownload = true,
             ReserveStorageSpaceBeforeStartingDownload = true,
-            MaximumMemoryBufferBytes = 10 * 1024 * 1024
+            MaximumMemoryBufferBytes = 10 * 1024 * 1024,
+            MaxRestartWithoutClearTempFile = 5
         };
     }
 

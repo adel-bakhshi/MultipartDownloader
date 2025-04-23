@@ -48,7 +48,7 @@ public class Bandwidth
         if (elapsedTime > OneSecond)
         {
             Speed = momentSpeed;
-            AverageSpeed = (AverageSpeed * _count + Speed) / (_count + 1);
+            AverageSpeed = ((AverageSpeed * _count) + Speed) / (_count + 1);
             _count++;
             SecondCheckpoint();
         }

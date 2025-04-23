@@ -12,6 +12,11 @@ namespace MultipartDownloader.Core;
 public abstract class AbstractDownloadService : IDownloadService, IDisposable, IAsyncDisposable
 {
     /// <summary>
+    /// The limit of progress value change for reporting download progress
+    /// </summary>
+    private const long ProgressValueChangeLimit = 1024 * 1024; // 1 MB
+
+    /// <summary>
     /// Logger instance for logging messages.
     /// </summary>
     protected ILogger? Logger;
@@ -89,6 +94,16 @@ public abstract class AbstractDownloadService : IDownloadService, IDisposable, I
         get => Package?.Status ?? DownloadStatus.None;
         set => Package.Status = value;
     }
+
+    /// <summary>
+    /// The last progress report time.
+    /// </summary>
+    protected DateTime? LastProgressReport { get; set; }
+
+    /// <summary>
+    /// The last progress value.
+    /// </summary>
+    protected long LastProgressValue { get; set; }
 
     /// <summary>
     /// Event triggered when the download file operation is completed.
@@ -463,10 +478,35 @@ public abstract class AbstractDownloadService : IDownloadService, IDisposable, I
             ReceivedBytes = e.ReceivedBytes,
             ActiveChunks = Options.ActiveChunks
         };
+
         Package.SaveProgress = totalProgressArg.ProgressPercentage;
         e.ActiveChunks = totalProgressArg.ActiveChunks;
         ChunkDownloadProgressChanged?.Invoke(this, e);
-        DownloadProgressChanged?.Invoke(this, totalProgressArg);
+
+        // Check if the download is complete or not for force report
+        var forceReport = e.ProgressPercentage >= 100;
+        // Raise DownloadProgressChanged if possible
+        OnDownloadProgressChanged(totalProgressArg, forceReport);
+    }
+
+    /// <summary>
+    /// Raises the <see cref="DownloadProgressChanged"/> event.
+    /// </summary>
+    /// <param name="e">The event args</param>
+    private void OnDownloadProgressChanged(CustomEventArgs.DownloadProgressChangedEventArgs e, bool forceReport)
+    {
+        // Get current time
+        var now = DateTime.Now;
+        // Don't raise event when last progress report is less than 1 second ago and progress value change is less than 1MB and not force report
+        if (LastProgressReport != null && now - LastProgressReport < TimeSpan.FromSeconds(1) && e.ReceivedBytesSize - LastProgressValue < ProgressValueChangeLimit && !forceReport)
+            return;
+
+        // Update the last progress report time and value
+        LastProgressReport = now;
+        LastProgressValue = e.ReceivedBytesSize;
+
+        // Raise the DownloadProgressChanged event
+        DownloadProgressChanged?.Invoke(this, e);
     }
 
     /// <summary>

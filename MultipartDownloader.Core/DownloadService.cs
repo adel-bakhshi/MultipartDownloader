@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Logging;
 using MultipartDownloader.Core.CustomEventArgs;
+using MultipartDownloader.Core.CustomExceptions;
 using MultipartDownloader.Core.Extensions.Helpers;
 using System.ComponentModel;
 
@@ -207,7 +208,7 @@ public class DownloadService : AbstractDownloadService
         }
 
         if (string.IsNullOrEmpty(Options.ChunkFilesOutputDirectory))
-            return;
+            throw DownloadException.CreateDownloadException(DownloadException.ChunkFilesDirectoryIsNotValid);
 
         var fileName = Path.GetFileNameWithoutExtension(Package.FileName) ?? Guid.NewGuid().ToString();
         var finalPath = Path.Combine(Options.ChunkFilesOutputDirectory, fileName);

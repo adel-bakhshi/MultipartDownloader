@@ -64,12 +64,17 @@ internal class ChunkDownloader
         {
             // Log error data
             _logger?.LogError(error, $"File size not match with chunk length for chunk {Chunk.Id} with retry");
-            // Clear chunk data
-            Chunk.Clear();
-            // Clear chunk temp file
-            Chunk.ClearTempFile();
-            // Raise DownloadRestarted event
-            OnDownloadRestarted(RestartReason.FileSizeIsNotMatchWithChunkLength);
+            // Reset chunk positions
+            Chunk.Position = Chunk.FilePosition = 0;
+            // Check if chunk can restart without clear temp file
+            if (!Chunk.CanRestartWithoutClearTempFile())
+            {
+                // Clear chunk temp file
+                Chunk.ClearTempFile();
+                // Raise DownloadRestarted event
+                OnDownloadRestarted(RestartReason.FileSizeIsNotMatchWithChunkLength);
+            }
+
             // Re-request and continue downloading
             return await ContinueWithDelay(downloadRequest, pause, cancelToken).ConfigureAwait(false);
         }
