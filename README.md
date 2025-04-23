@@ -68,7 +68,7 @@ MultipartDownloader introduces several improvements and modifications over the o
 The usage of MultipartDownloader is similar to `bezzad/Downloader`, with the key requirement that the `ChunkFilesOutputDirectory` property must be set to a valid directory path in `DownloadConfiguration`.
 
 ```csharp
-using Downloader;
+using MultipartDownloader.Core;
 
 var config = new DownloadConfiguration
 {
