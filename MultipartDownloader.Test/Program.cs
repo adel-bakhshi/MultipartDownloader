@@ -11,26 +11,12 @@ internal class Program
 
     private static async Task Main(string[] args)
     {
-        const string url = "https://dl2.soft98.ir/soft/x-y-z/Yamicsoft.Windows.Manager.2.1.4.x64.rar?1744962507";
+        const string url = "https://dl2.soft98.ir/soft/u-v/Visual.Studio.Code.1.99.3.x64.rar?1745392154";
         var desktopDirectory = Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
-        var configuration = new DownloadConfiguration
-        {
-            ChunkFilesOutputDirectory = desktopDirectory,
-            ChunkCount = 8,
-            MaximumBytesPerSecond = 0 * 1024,
-            ParallelDownload = true,
-            ReserveStorageSpaceBeforeStartingDownload = true,
-            MaximumMemoryBufferBytes = 10 * 1024 * 1024
-        };
+        var configuration = GetDownloadConfiguration(desktopDirectory);
+        var downloadService = GetDownloadService(configuration);
 
-        var downloadService = new DownloadService(configuration);
-        // Events
-        downloadService.MergeStarted += DownloadServiceOnMergeStarted;
-        downloadService.MergeProgressChanged += DownloadServiceOnMergeProgressChanged;
-        downloadService.DownloadFileCompleted += DownloadServiceOnDownloadFileCompleted;
-        downloadService.ChunkDownloadRestarted += DownloadServiceOnChunkDownloadRestarted;
-
-        var filePath = Path.Combine(desktopDirectory, "Yamicsoft.Windows.Manager.2.1.4.x64.rar");
+        var filePath = Path.Combine(desktopDirectory, "Visual.Studio.Code.1.99.3.x64.rar");
         _ = downloadService.DownloadFileTaskAsync(url, filePath);
 
         while (!_isMerged)
@@ -82,7 +68,8 @@ internal class Program
                         else
                         {
                             var package = _downloadPackage;
-                            downloadService = new DownloadService(configuration);
+                            configuration = GetDownloadConfiguration(desktopDirectory);
+                            downloadService = GetDownloadService(configuration);
                             _ = downloadService.DownloadFileTaskAsync(package);
                             _downloadPackage = null;
                         }
@@ -101,6 +88,32 @@ internal class Program
         }
     }
 
+    private static DownloadConfiguration GetDownloadConfiguration(string outputDirectory)
+    {
+        return new DownloadConfiguration
+        {
+            ChunkFilesOutputDirectory = outputDirectory,
+            ChunkCount = 8,
+            MaximumBytesPerSecond = 0 * 1024,
+            ParallelDownload = true,
+            ReserveStorageSpaceBeforeStartingDownload = true,
+            MaximumMemoryBufferBytes = 10 * 1024 * 1024
+        };
+    }
+
+    private static DownloadService GetDownloadService(DownloadConfiguration configuration)
+    {
+        var downloadService = new DownloadService(configuration);
+        // Events
+        downloadService.MergeStarted += DownloadServiceOnMergeStarted;
+        downloadService.MergeProgressChanged += DownloadServiceOnMergeProgressChanged;
+        downloadService.DownloadFileCompleted += DownloadServiceOnDownloadFileCompleted;
+        downloadService.ChunkDownloadRestarted += DownloadServiceOnChunkDownloadRestarted;
+        downloadService.DownloadProgressChanged += DownloadServiceOnDownloadProgressChanged;
+
+        return downloadService;
+    }
+
     private static void DownloadServiceOnMergeStarted(object? sender, Core.CustomEventArgs.MergeStartedEventArgs e)
     {
         _isMerging = true;
@@ -116,8 +129,20 @@ internal class Program
 
     private static void DownloadServiceOnDownloadFileCompleted(object? sender, System.ComponentModel.AsyncCompletedEventArgs e)
     {
+        Console.Clear();
+
         if (e.Error != null)
-            Console.WriteLine(e.Error);
+        {
+            Console.WriteLine($"Error occurred. Error message: {e.Error.Message}");
+        }
+        else if (e.Cancelled)
+        {
+            Console.WriteLine("Stopped");
+        }
+        else
+        {
+            Console.WriteLine("Completed");
+        }
     }
 
     private static void DownloadServiceOnChunkDownloadRestarted(object? sender, Core.CustomEventArgs.ChunkDownloadRestartedEventArgs e)
@@ -126,5 +151,10 @@ internal class Program
         Console.ForegroundColor = ConsoleColor.Red;
         Console.WriteLine($"Chunk {e.ChunkId} restarted. Reason: {e.Reason}");
         Console.ForegroundColor = currentColor;
+    }
+
+    private static void DownloadServiceOnDownloadProgressChanged(object? sender, Core.CustomEventArgs.DownloadProgressChangedEventArgs e)
+    {
+        Console.WriteLine(e.ProgressPercentage);
     }
 }

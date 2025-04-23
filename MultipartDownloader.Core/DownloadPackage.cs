@@ -80,8 +80,8 @@ public class DownloadPackage : IDisposable, IAsyncDisposable
         {
             if (!chunk.IsValidPosition())
             {
-                if (File.Exists(chunk.ChunkFilePath))
-                    File.Delete(chunk.ChunkFilePath);
+                if (File.Exists(chunk.TempFilePath))
+                    File.Delete(chunk.TempFilePath);
 
                 chunk.Clear();
             }

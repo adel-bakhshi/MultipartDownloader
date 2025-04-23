@@ -72,7 +72,7 @@ public class Chunk
     /// <summary>
     /// Gets or sets file path for current chunk
     /// </summary>
-    public string ChunkFilePath { get; set; } = string.Empty;
+    public string TempFilePath { get; set; } = string.Empty;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="Chunk"/> class with default values.
@@ -133,5 +133,17 @@ public class Chunk
     public bool IsValidPosition()
     {
         return Length == 0 || (Position >= 0 && Position <= Length);
+    }
+
+    /// <summary>
+    /// Clears the temporary file associated with the chunk.
+    /// </summary>
+    public void ClearTempFile()
+    {
+        if (!File.Exists(TempFilePath))
+            return;
+
+        using var stream = File.OpenWrite(TempFilePath);
+        stream.SetLength(0);
     }
 }

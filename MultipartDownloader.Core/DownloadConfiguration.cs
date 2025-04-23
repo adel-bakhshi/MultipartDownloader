@@ -26,6 +26,7 @@ public class DownloadConfiguration : ICloneable, INotifyPropertyChanged
     private bool _reserveStorageSpaceBeforeStartingDownload; // Before starting the download, reserve the storage space of the file as file size.
     private bool _enableLiveStreaming; // Get on demand downloaded data with ReceivedBytes on downloadProgressChanged event
     private string _chunkFilesOutputDirectory = string.Empty; // Directory to store downloaded data for each chunk for merging at the end of the download
+    private string _chunkFilesFinalPath = string.Empty; // Final directory to store downloaded data for each chunk
 
     /// <summary>
     /// To bind view models to fire changes in MVVM pattern
@@ -238,12 +239,30 @@ public class DownloadConfiguration : ICloneable, INotifyPropertyChanged
     }
 
     /// <summary>
+    /// Gets the final directory path to store downloaded data for each chunk.
+    /// </summary>
+    public string ChunkFilesFinalPath => _chunkFilesFinalPath;
+
+    /// <summary>
     /// Creates a shallow copy of the current object.
     /// </summary>
     /// <returns>A shallow copy of the current object.</returns>
     public object Clone()
     {
         return MemberwiseClone();
+    }
+
+    /// <summary>
+    /// Sets final directory path to store downloaded data for each chunk and create this directory if it is not exists.
+    /// </summary>
+    /// <param name="path">The valid directory path to be saved as final directory</param>
+    public void SaveChunkFilesFinalPath(string path)
+    {
+        // Set chunk files final path
+        _chunkFilesFinalPath = path;
+        // Make sure the final directory is exists
+        if (!Directory.Exists(_chunkFilesFinalPath))
+            Directory.CreateDirectory(_chunkFilesFinalPath);
     }
 
     #region Helpers

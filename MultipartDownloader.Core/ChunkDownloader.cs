@@ -1,5 +1,6 @@
 ﻿using Microsoft.Extensions.Logging;
 using MultipartDownloader.Core.CustomEventArgs;
+using MultipartDownloader.Core.CustomExceptions;
 using MultipartDownloader.Core.Enums;
 using MultipartDownloader.Core.Extensions.Helpers;
 using System.ComponentModel;
@@ -9,8 +10,6 @@ namespace MultipartDownloader.Core;
 
 internal class ChunkDownloader
 {
-    private const string FileSizeNotMatch = "The file size does not match the downloaded size.";
-
     private readonly ILogger? _logger;
     private readonly DownloadConfiguration _configuration;
     private readonly int _timeoutIncrement = 10;
@@ -61,12 +60,17 @@ internal class ChunkDownloader
             _logger?.LogError(error, $"Disposed object error on download chunk {Chunk.Id} with retry");
             return await ContinueWithDelay(downloadRequest, pause, cancelToken).ConfigureAwait(false);
         }
-        catch (InvalidOperationException error) when (error.Message.Equals(FileSizeNotMatch, StringComparison.OrdinalIgnoreCase)) // when file size in not match with chunk length
+        catch (DownloadException error) when (error.ErrorCode == DownloadException.FileSizeNotMatchWithChunkLength) // when file size in not match with chunk length
         {
+            // Log error data
             _logger?.LogError(error, $"File size not match with chunk length for chunk {Chunk.Id} with retry");
-            // TODO: Should I have to clear chunk and download this chunk again?
+            // Clear chunk data
             Chunk.Clear();
+            // Clear chunk temp file
+            Chunk.ClearTempFile();
+            // Raise DownloadRestarted event
             OnDownloadRestarted(RestartReason.FileSizeIsNotMatchWithChunkLength);
+            // Re-request and continue downloading
             return await ContinueWithDelay(downloadRequest, pause, cancelToken).ConfigureAwait(false);
         }
         catch (Exception error) when (Chunk.CanTryAgainOnFailover() && error.IsMomentumError())
@@ -105,7 +109,7 @@ internal class ChunkDownloader
         if (!Chunk.IsDownloadCompleted())
         {
             // Open or create temp stream for saving chunk data
-            _storage = new MemoryBufferedStream(Chunk.ChunkFilePath, _configuration.MaximumMemoryBufferBytesPerChunk, Chunk.FilePosition);
+            _storage = new MemoryBufferedStream(Chunk.TempFilePath, _configuration.MaximumMemoryBufferBytesPerChunk, Chunk.FilePosition);
             // Sync storage with chunk position
             SyncPositionWithStorage();
 
@@ -304,7 +308,7 @@ internal class ChunkDownloader
         // Otherwise, the file size should be compared to the chunk position
         var chunkLength = Chunk.Length > 0 ? Chunk.Length : Chunk.Position;
         if (_storage?.Length != chunkLength)
-            throw new InvalidOperationException(FileSizeNotMatch);
+            throw DownloadException.CreateDownloadException(DownloadException.FileSizeNotMatchWithChunkLength);
     }
 
     #endregion Helpers

@@ -115,7 +115,7 @@ public class DownloadService : AbstractDownloadService
         // Remove temporary files
         for (var i = 0; i < sortedChunks.Count; i++)
         {
-            var tempFilePath = sortedChunks[i].ChunkFilePath;
+            var tempFilePath = sortedChunks[i].TempFilePath;
             if (File.Exists(tempFilePath))
                 File.Delete(tempFilePath);
 
@@ -132,7 +132,7 @@ public class DownloadService : AbstractDownloadService
     private async Task MergeFileWithProgressAsync(Stream finalStrem, Chunk chunk)
     {
         // Open temp stream
-        await using var tempStream = new FileStream(chunk.ChunkFilePath, FileMode.Open, FileAccess.Read);
+        await using var tempStream = new FileStream(chunk.TempFilePath, FileMode.Open, FileAccess.Read);
         var buffer = new byte[8192]; // 8 kilobyte buffer
         var bytesRead = 0;
         long lastPosition = 0;
@@ -193,6 +193,9 @@ public class DownloadService : AbstractDownloadService
         CheckOutputDirectory();
     }
 
+    /// <summary>
+    /// Checks if the output directory exists and creates it if it does not.
+    /// </summary>
     private void CheckOutputDirectory()
     {
         Options.ChunkFilesOutputDirectory = Options.ChunkFilesOutputDirectory?.Trim() ?? string.Empty;
@@ -207,10 +210,8 @@ public class DownloadService : AbstractDownloadService
             return;
 
         var fileName = Path.GetFileNameWithoutExtension(Package.FileName) ?? Guid.NewGuid().ToString();
-        Options.ChunkFilesOutputDirectory = Path.Combine(Options.ChunkFilesOutputDirectory, fileName);
-
-        if (!Directory.Exists(Options.ChunkFilesOutputDirectory))
-            Directory.CreateDirectory(Options.ChunkFilesOutputDirectory);
+        var finalPath = Path.Combine(Options.ChunkFilesOutputDirectory, fileName);
+        Options.SaveChunkFilesFinalPath(finalPath);
     }
 
     /// <summary>
@@ -378,10 +379,10 @@ public class DownloadService : AbstractDownloadService
     /// <returns>The chunk downloader for the specified chunk.</returns>
     private ChunkDownloader GetChunkDownloader(Chunk chunk)
     {
-        if (string.IsNullOrEmpty(chunk.ChunkFilePath))
+        if (string.IsNullOrEmpty(chunk.TempFilePath))
         {
             var fileName = Path.GetFileNameWithoutExtension(Package.FileName) + $".part{int.Parse(chunk.Id) + 1}.tmp";
-            chunk.ChunkFilePath = Path.Combine(Options.ChunkFilesOutputDirectory, fileName);
+            chunk.TempFilePath = Path.Combine(Options.ChunkFilesFinalPath, fileName);
         }
 
         return new(chunk, Options, Logger);

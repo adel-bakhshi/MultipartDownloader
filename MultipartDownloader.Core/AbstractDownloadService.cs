@@ -476,7 +476,7 @@ public abstract class AbstractDownloadService : IDownloadService, IDisposable, I
     {
         var totalFileSize = Package.TotalFileSize;
         var numberOfChunks = Package.Chunks.Length;
-        var chunksDirectoryPath = Package.Chunks.Length > 1 ? (Path.GetDirectoryName(Package.Chunks[0].ChunkFilePath) ?? string.Empty) : string.Empty;
+        var chunksDirectoryPath = Package.Chunks.Length > 1 ? (Path.GetDirectoryName(Package.Chunks[0].TempFilePath) ?? string.Empty) : string.Empty;
         var eventArgs = new MergeStartedEventArgs(totalFileSize, numberOfChunks, chunksDirectoryPath);
         MergeStarted?.Invoke(this, eventArgs);
     }
