@@ -11,12 +11,12 @@ internal class Program
 
     private static async Task Main(string[] args)
     {
-        const string url = "https://dl2.soft98.ir/soft/w/Wondershare.UniConverter.16.4.6.219.x64.rar?1745411520";
+        const string url = "https://github.com/bezzad/Downloader/archive/refs/heads/master.zip";
         var desktopDirectory = Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
         var configuration = GetDownloadConfiguration(desktopDirectory);
         var downloadService = GetDownloadService(configuration);
 
-        var filePath = Path.Combine(desktopDirectory, "Wondershare.UniConverter.16.4.6.219.x64.rar");
+        var filePath = Path.Combine(desktopDirectory, "Downloader.zip");
         _ = downloadService.DownloadFileTaskAsync(url, filePath);
 
         while (!_isMerged)
@@ -94,11 +94,12 @@ internal class Program
         {
             ChunkFilesOutputDirectory = outputDirectory,
             ChunkCount = 8,
-            MaximumBytesPerSecond = 0 * 1024,
+            MaximumBytesPerSecond = 64 * 1024, // 64 KB/s
             ParallelDownload = true,
             ReserveStorageSpaceBeforeStartingDownload = true,
-            MaximumMemoryBufferBytes = 10 * 1024 * 1024,
-            MaxRestartWithoutClearTempFile = 5
+            MaximumMemoryBufferBytes = 10 * 1024 * 1024, // 10 MB
+            MaxRestartWithoutClearTempFile = 5,
+            MaximumBytesPerSecondForMerge = 128 * 1024 // 128 KB/s
         };
     }
 
