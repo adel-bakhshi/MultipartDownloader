@@ -11,12 +11,12 @@ internal class Program
 
     private static async Task Main(string[] args)
     {
-        const string url = "https://github.com/bezzad/Downloader/archive/refs/heads/master.zip";
+        const string url = "https://dl2.soft98.ir/soft/p-q/PotPlayer.1.7.22539.x64.rar?1747474022";
         var desktopDirectory = Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
         var configuration = GetDownloadConfiguration(desktopDirectory);
         var downloadService = GetDownloadService(configuration);
 
-        var filePath = Path.Combine(desktopDirectory, "Downloader.zip");
+        var filePath = Path.Combine(desktopDirectory, "PotPlayer.1.7.22539.x64.rar");
         _ = downloadService.DownloadFileTaskAsync(url, filePath);
 
         while (!_isMerged)
@@ -94,12 +94,12 @@ internal class Program
         {
             ChunkFilesOutputDirectory = outputDirectory,
             ChunkCount = 8,
-            MaximumBytesPerSecond = 64 * 1024, // 64 KB/s
+            MaximumBytesPerSecond = 512 * 1024, // 512 KB/s
             ParallelDownload = true,
             ReserveStorageSpaceBeforeStartingDownload = true,
             MaximumMemoryBufferBytes = 10 * 1024 * 1024, // 10 MB
             MaxRestartWithoutClearTempFile = 5,
-            MaximumBytesPerSecondForMerge = 128 * 1024 // 128 KB/s
+            MaximumBytesPerSecondForMerge = 1024 * 1024 // 1 MB/s
         };
     }
 
