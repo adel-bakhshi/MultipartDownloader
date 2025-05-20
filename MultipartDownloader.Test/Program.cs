@@ -68,7 +68,7 @@ internal class Program
                         else
                         {
                             var package = _downloadPackage;
-                            configuration = GetDownloadConfiguration(desktopDirectory);
+                            configuration = GetDownloadConfiguration(Path.Combine(desktopDirectory, "NewFolder"));
                             downloadService = GetDownloadService(configuration);
                             _ = downloadService.DownloadFileTaskAsync(package);
                             _downloadPackage = null;

@@ -13,6 +13,9 @@ public class DownloadService : AbstractDownloadService
 {
     #region Private fields
 
+    /// <summary>
+    /// Shows the current position of the merge operation.
+    /// </summary>
     private long _mergePosition;
 
     #endregion Private fields
@@ -229,8 +232,12 @@ public class DownloadService : AbstractDownloadService
             throw DownloadException.CreateDownloadException(DownloadException.ChunkFilesDirectoryIsNotValid);
 
         var fileName = Path.GetFileNameWithoutExtension(Package.FileName) ?? Guid.NewGuid().ToString();
-        var finalPath = Path.Combine(Options.ChunkFilesOutputDirectory, fileName);
-        Options.SaveChunkFilesFinalPath(finalPath);
+        var temporaryPath = Path.Combine(Options.ChunkFilesOutputDirectory, fileName);
+        if (Directory.Exists(Package.TemporarySavePath) && Directory.GetFiles(Package.TemporarySavePath, $"{fileName}.*.tmp").Length > 0)
+            return;
+        
+        Package.TemporarySavePath = temporaryPath;
+        Package.CreateTemporarySavePath();
     }
 
     /// <summary>
@@ -401,7 +408,7 @@ public class DownloadService : AbstractDownloadService
         if (string.IsNullOrEmpty(chunk.TempFilePath))
         {
             var fileName = Path.GetFileNameWithoutExtension(Package.FileName) + $".part{int.Parse(chunk.Id) + 1}.tmp";
-            chunk.TempFilePath = Path.Combine(Options.ChunkFilesFinalPath, fileName);
+            chunk.TempFilePath = Path.Combine(Package.TemporarySavePath, fileName);
         }
 
         return new(chunk, Options, Logger);
