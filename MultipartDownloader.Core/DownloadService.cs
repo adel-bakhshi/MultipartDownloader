@@ -30,7 +30,9 @@ public class DownloadService : AbstractDownloadService
     /// <summary>
     /// Initializes a new instance of the <see cref="DownloadService"/> class with default options.
     /// </summary>
-    public DownloadService(ILoggerFactory? loggerFactory = null) : this(null, loggerFactory) { }
+    public DownloadService(ILoggerFactory? loggerFactory = null) : this(null, loggerFactory)
+    {
+    }
 
     /// <summary>
     /// Starts the download operation.
@@ -152,7 +154,6 @@ public class DownloadService : AbstractDownloadService
         await using var throttledStream = new ThrottledStream(tempStream, Options.MaximumBytesPerSecondForMerge);
         var buffer = new byte[8192]; // 8 kilobyte buffer
         var bytesRead = 0;
-        DateTime? lastMergeProgressSignal = null;
 
         // Read bytes from temp stream
         while ((bytesRead = await throttledStream.ReadAsync(buffer).ConfigureAwait(false)) > 0)
@@ -166,18 +167,9 @@ public class DownloadService : AbstractDownloadService
             // Update position
             _mergePosition += bytesRead;
 
-            // Raise MergeProgressChanged event every 100ms
-            var now = DateTime.Now;
-            if (lastMergeProgressSignal == null || now - lastMergeProgressSignal > TimeSpan.FromMilliseconds(100))
-            {
-                // Raise MergeProgressChanged event
-                SendMergeProgressChangedSignal(_mergePosition, Package.TotalFileSize);
-                lastMergeProgressSignal = now;
-            }
+            // Raise MergeProgressChanged event
+            SendMergeProgressChangedSignal(_mergePosition, Package.TotalFileSize);
         }
-
-        // Raise MergeProgressChanged event for last time
-        SendMergeProgressChangedSignal(_mergePosition, Package.TotalFileSize);
     }
 
     /// <summary>
