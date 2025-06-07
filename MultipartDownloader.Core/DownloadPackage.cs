@@ -125,7 +125,7 @@ public class DownloadPackage : IDisposable, IAsyncDisposable
     /// </summary>
     public void Dispose()
     {
-        Clear();
+        DisposeAsync().AsTask().Wait();
     }
 
     /// <summary>

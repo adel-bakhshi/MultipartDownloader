@@ -11,12 +11,12 @@ internal class Program
 
     private static async Task Main(string[] args)
     {
-        const string url = "https://dl2.soft98.ir/soft/p-q/PotPlayer.1.7.22539.x64.rar?1747474022";
+        const string url = "https://dl2.soft98.ir/soft/a/AnyDesk.9.5.5.zip?1749289119";
         var desktopDirectory = Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
         var configuration = GetDownloadConfiguration(desktopDirectory);
         var downloadService = GetDownloadService(configuration);
 
-        var filePath = Path.Combine(desktopDirectory, "PotPlayer.1.7.22539.x64.rar");
+        var filePath = Path.Combine(desktopDirectory, "AnyDesk.9.5.5.zip");
         _ = downloadService.DownloadFileTaskAsync(url, filePath);
 
         while (!_isMerged)
