@@ -274,7 +274,7 @@ internal class ChunkDownloader
     /// Raises the <see cref="DownloadProgressChanged"/> event.
     /// </summary>
     /// <param name="e">The arguments of the event.</param>
-    private void OnDownloadProgressChanged(CustomEventArgs.DownloadProgressChangedEventArgs e)
+    private void OnDownloadProgressChanged(DownloadProgressChangedEventArgs e)
     {
         DownloadProgressChanged?.Invoke(this, e);
     }
