@@ -93,10 +93,12 @@ public class DownloadService : AbstractDownloadService
         }
         catch (OperationCanceledException exp)
         {
+            Logger?.LogWarning(exp, "Download was cancelled");
             SendDownloadCompletionSignal(DownloadStatus.Stopped, exp);
         }
         catch (Exception exp)
         {
+            Logger?.LogError(exp, "Download failed with error: {ErrorMessage}", exp.Message);
             SendDownloadCompletionSignal(DownloadStatus.Failed, exp);
         }
         finally
