@@ -11,12 +11,12 @@ internal class Program
 
     private static async Task Main(string[] args)
     {
-        const string url = "https://dl2.soft98.ir/soft/a/AnyDesk.9.5.5.zip?1749289119";
+        const string url = "https://dl2.soft98.ir/soft/s/StartAllBack.3.9.10.5273.rar?1749362042";
         var desktopDirectory = Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
         var configuration = GetDownloadConfiguration(desktopDirectory);
         var downloadService = GetDownloadService(configuration);
 
-        var filePath = Path.Combine(desktopDirectory, "AnyDesk.9.5.5.zip");
+        var filePath = Path.Combine(desktopDirectory, "StartAllBack.3.9.10.5273.rar");
         _ = downloadService.DownloadFileTaskAsync(url, filePath);
 
         while (!_isMerged)

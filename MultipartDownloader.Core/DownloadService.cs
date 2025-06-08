@@ -107,7 +107,10 @@ public class DownloadService : AbstractDownloadService
             Logger?.LogDebug("Download process completed, semaphore released");
         }
 
-        return Package.GetStorageStream();
+        // When we use the commented code, the stream always be open and the final file will be locked
+        // So, we need to return a null stream to avoid this issue
+        //return Package.GetStorageStream();
+        return Stream.Null;
     }
 
     /// <summary>
