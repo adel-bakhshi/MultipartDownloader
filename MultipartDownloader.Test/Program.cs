@@ -11,12 +11,13 @@ internal class Program
 
     private static async Task Main(string[] args)
     {
-        const string url = "https://dl2.soft98.ir/soft/s/StartAllBack.3.9.10.5273.rar?1749362042";
+        const string url = "https://dl2.soft98.ir/soft/m/Mozilla.Firefox.144.0.2.EN.x64.zip?1761659513";
+        const string fileName = "Mozilla.Firefox.144.0.2.EN.x64.zip";
         var desktopDirectory = Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
         var configuration = GetDownloadConfiguration(desktopDirectory);
         var downloadService = GetDownloadService(configuration);
 
-        var filePath = Path.Combine(desktopDirectory, "StartAllBack.3.9.10.5273.rar");
+        var filePath = Path.Combine(desktopDirectory, fileName);
         _ = downloadService.DownloadFileTaskAsync(url, filePath);
 
         while (!_isMerged)
@@ -27,12 +28,12 @@ internal class Program
                 continue;
             }
 
-            Console.Clear();
+            Console.WriteLine();
             Console.WriteLine("Please choose:");
             Console.WriteLine("P: Pause/Resume");
             Console.WriteLine("S: Stop/Start");
             Console.WriteLine("Esc: Close");
-            Console.Write("Your choice: ");
+            Console.WriteLine();
 
             switch (Console.ReadKey().Key)
             {
@@ -94,12 +95,14 @@ internal class Program
         {
             ChunkFilesOutputDirectory = outputDirectory,
             ChunkCount = 8,
-            MaximumBytesPerSecond = 512 * 1024, // 512 KB/s
+            //MaximumBytesPerSecond = 512 * 1024, // 512 KB/s
+            MaximumBytesPerSecond = 0, // No limit
             ParallelDownload = true,
             ReserveStorageSpaceBeforeStartingDownload = true,
-            MaximumMemoryBufferBytes = 10 * 1024 * 1024, // 10 MB
+            MaximumMemoryBufferBytes = 80 * 1024 * 1024, // 80 MB
             MaxRestartWithoutClearTempFile = 5,
-            MaximumBytesPerSecondForMerge = 1024 * 1024 // 1 MB/s
+            //MaximumBytesPerSecondForMerge = 1024 * 1024 // 1 MB/s
+            MaximumBytesPerSecondForMerge = 0 // No limit
         };
     }
 
@@ -119,7 +122,6 @@ internal class Program
     private static void DownloadServiceOnMergeStarted(object? sender, Core.CustomEventArgs.MergeStartedEventArgs e)
     {
         _isMerging = true;
-        Console.Clear();
         Console.WriteLine("Merge started...");
     }
 
@@ -131,15 +133,13 @@ internal class Program
 
     private static void DownloadServiceOnDownloadFileCompleted(object? sender, System.ComponentModel.AsyncCompletedEventArgs e)
     {
-        Console.Clear();
-
-        if (e.Error != null)
-        {
-            Console.WriteLine($"Error occurred. Error message: {e.Error.Message}");
-        }
-        else if (e.Cancelled)
+        if (e.Cancelled)
         {
             Console.WriteLine("Stopped");
+        }
+        else if (e.Error != null)
+        {
+            Console.WriteLine($"Error occurred. Error message: {e.Error.Message}");
         }
         else
         {
