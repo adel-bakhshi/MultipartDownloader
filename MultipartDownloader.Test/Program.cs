@@ -1,4 +1,6 @@
-﻿using MultipartDownloader.Core;
+﻿using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using MultipartDownloader.Core;
 
 namespace MultipartDownloader.Test;
 
@@ -11,11 +13,13 @@ internal class Program
 
     private static async Task Main(string[] args)
     {
-        const string url = "https://dl2.soft98.ir/soft/m/Mozilla.Firefox.144.0.2.EN.x64.zip?1761659513";
-        const string fileName = "Mozilla.Firefox.144.0.2.EN.x64.zip";
+        var services = CreateServiceCollection();
+
+        const string url = "https://dl2.soft98.ir/soft/m/Mozilla.Firefox.145.0.2.EN.x64.zip?1764139330";
+        const string fileName = "Mozilla.Firefox.145.0.2.EN.x64.zip";
         var desktopDirectory = Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
         var configuration = GetDownloadConfiguration(desktopDirectory);
-        var downloadService = GetDownloadService(configuration);
+        var downloadService = GetDownloadService(configuration, services);
 
         var filePath = Path.Combine(desktopDirectory, fileName);
         _ = downloadService.DownloadFileTaskAsync(url, filePath);
@@ -70,7 +74,7 @@ internal class Program
                         {
                             var package = _downloadPackage;
                             configuration = GetDownloadConfiguration(Path.Combine(desktopDirectory, "NewFolder"));
-                            downloadService = GetDownloadService(configuration);
+                            downloadService = GetDownloadService(configuration, services);
                             _ = downloadService.DownloadFileTaskAsync(package);
                             _downloadPackage = null;
                         }
@@ -87,6 +91,19 @@ internal class Program
                     }
             }
         }
+    }
+
+    private static ServiceProvider CreateServiceCollection()
+    {
+        var serviceCollection = new ServiceCollection();
+
+        serviceCollection.AddLogging(builder =>
+        {
+            builder.SetMinimumLevel(LogLevel.Debug);
+            builder.AddConsole();
+        });
+
+        return serviceCollection.BuildServiceProvider();
     }
 
     private static DownloadConfiguration GetDownloadConfiguration(string outputDirectory)
@@ -106,15 +123,16 @@ internal class Program
         };
     }
 
-    private static DownloadService GetDownloadService(DownloadConfiguration configuration)
+    private static DownloadService GetDownloadService(DownloadConfiguration configuration, ServiceProvider services)
     {
-        var downloadService = new DownloadService(configuration);
+        var loggerFactory = services.GetRequiredService<ILoggerFactory>();
+        var downloadService = new DownloadService(configuration, loggerFactory);
         // Events
-        downloadService.MergeStarted += DownloadServiceOnMergeStarted;
-        downloadService.MergeProgressChanged += DownloadServiceOnMergeProgressChanged;
-        downloadService.DownloadFileCompleted += DownloadServiceOnDownloadFileCompleted;
-        downloadService.ChunkDownloadRestarted += DownloadServiceOnChunkDownloadRestarted;
-        downloadService.DownloadProgressChanged += DownloadServiceOnDownloadProgressChanged;
+        //downloadService.MergeStarted += DownloadServiceOnMergeStarted;
+        //downloadService.MergeProgressChanged += DownloadServiceOnMergeProgressChanged;
+        //downloadService.DownloadFileCompleted += DownloadServiceOnDownloadFileCompleted;
+        //downloadService.ChunkDownloadRestarted += DownloadServiceOnChunkDownloadRestarted;
+        //downloadService.DownloadProgressChanged += DownloadServiceOnDownloadProgressChanged;
 
         return downloadService;
     }
