@@ -34,7 +34,7 @@ internal class ChunkBuffer
     /// </summary>
     public long FilePosition { get; set; }
 
-    #endregion
+    #endregion Properties
 
     /// <summary>
     /// Initializes a new instance of the <see cref="ChunkBuffer"/> class.
@@ -72,11 +72,15 @@ internal class ChunkBuffer
     {
         CreateStreamIfNull();
 
-        FilePosition = offset;
-        if (FilePosition > FileStream!.Length)
-            FilePosition = FileStream.Length;
+        // Seek the underlying FileStream using the given origin and offset,
+        // then set FilePosition to the actual stream position.
+        var newPos = FileStream!.Seek(offset, origin);
 
-        FileStream.Seek(FilePosition, origin);
+        // Ensure file position is never less than 0
+        if (newPos < 0)
+            newPos = 0;
+
+        FilePosition = newPos;
     }
 
     /// <summary>

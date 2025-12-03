@@ -133,13 +133,13 @@ internal class ChunkDownloader
         if (cancelToken.IsCancellationRequested || _chunk.IsDownloadCompleted())
             return;
 
-        // Create buffer for chunk
-        _storage.CreateBuffer(_chunk.Id, _chunk.TempFilePath, _chunk.FilePosition, SeekOrigin.Begin, cancelToken);
-        _logger?.LogDebug("Memory buffered stream created for chunk {ChunkId}.", _chunk.Id);
-
         // Sync storage with chunk position
         _logger?.LogDebug("Syncing chunk {ChunkId} position with storage...", _chunk.Id);
         SyncPositionWithStorage();
+
+        // Create buffer for chunk
+        _storage.CreateBuffer(_chunk.Id, _chunk.TempFilePath, _chunk.FilePosition, SeekOrigin.Begin, cancelToken);
+        _logger?.LogDebug("Memory buffered stream created for chunk {ChunkId}.", _chunk.Id);
 
         _logger?.LogDebug("DownloadChunk of the chunk {ChunkId}.", _chunk.Id);
         var requestMsg = request.GetRequest();
@@ -203,7 +203,7 @@ internal class ChunkDownloader
 
                 _logger?.LogDebug("Write {ReadSize} bytes in the chunk {ChunkId}", readSize, _chunk.Id);
                 _chunk.Position += readSize;
-                _chunk.FilePosition = _storage.GetChunkFilePosition(_chunk.Id);
+                //_chunk.FilePosition = _storage.GetChunkFilePosition(_chunk.Id);
                 _logger?.LogDebug("The chunk {ChunkId} current position is: {ChunkPosition} of {ChunkLength}", _chunk.Id, _chunk.Position, _chunk.Length);
 
                 OnDownloadProgressChanged(new DownloadProgressChangedEventArgs(_chunk.Id)
@@ -257,11 +257,11 @@ internal class ChunkDownloader
         // Change chunk position and file position based on the length of storage
         if ((storageLength > _chunk.Position && storageLength <= _chunk.Length) || storageLength < _chunk.Position)
         {
-            var length = storageLength >= _configuration.BufferBlockSize ? storageLength - _configuration.BufferBlockSize : 0;
             _logger?.LogDebug("The length of the chunk file {ChunkId} is {StorageLength} and the chunk position is {ChunkPosition}", _chunk.Id, storageLength, _chunk.Position);
 
-            _storage.SetChunkFilePosition(_chunk.Id, length, SeekOrigin.Begin);
-            _chunk.Position = _chunk.FilePosition = length;
+            _storage.SetChunkFilePosition(_chunk.Id, storageLength, SeekOrigin.Begin);
+            _chunk.Position = storageLength;
+            _chunk.FilePosition = storageLength;
 
             _logger?.LogDebug("The chunk {ChunkId} current position is: {ChunkPosition} of {ChunkLength}", _chunk.Id, _chunk.Position, _chunk.Length);
         }
@@ -315,27 +315,50 @@ internal class ChunkDownloader
 
         _logger?.LogDebug("Flush chunk {ChunkId} storage", _chunk.Id);
 
-        await _storage.FlushChunkAsync(_chunk.Id, cancellationToken).ConfigureAwait(false);
-        // Add a small delay to ensure file is fully written
-        await Task.Delay(10, cancellationToken).ConfigureAwait(false);
-        _chunk.FilePosition = _storage.GetChunkFilePosition(_chunk.Id);
+        var beforeFlushPosition = _chunk.FilePosition;
+        var memoryLengthBefore = _storage.GetChunkMemoryLength(_chunk.Id);
 
-        _logger?.LogDebug("Chunk {ChunkId} storage flushed and file position updated to {FilePosition}", _chunk.Id, _chunk.FilePosition);
+        await _storage.FlushChunkAsync(_chunk.Id, cancellationToken).ConfigureAwait(false);
+
+        await Task.Delay(50, cancellationToken).ConfigureAwait(false);
+
+        var afterFlushPosition = _storage.GetChunkFilePosition(_chunk.Id);
+        var memoryLengthAfter = _storage.GetChunkMemoryLength(_chunk.Id);
+
+        if (afterFlushPosition != beforeFlushPosition + memoryLengthBefore)
+        {
+            _logger?.LogError("Flush validation failed! Chunk {ChunkId}: BeforePos={Before}, AfterPos={After}, Memory={Memory}",
+                _chunk.Id, beforeFlushPosition, afterFlushPosition, memoryLengthBefore);
+        }
+
+        _chunk.FilePosition = afterFlushPosition;
+
+        _logger?.LogDebug("Chunk {ChunkId} storage flushed: Before={Before}, After={After}, MemoryBefore={MemBefore}, MemoryAfter={MemAfter}",
+            _chunk.Id, beforeFlushPosition, afterFlushPosition, memoryLengthBefore, memoryLengthAfter);
     }
 
     /// <summary>
     /// Compare file size with chunk length and make sure file size is equal to chunk length
     /// </summary>
-    /// <exception cref="InvalidOperationException">If file size not match with chunk length</exception>
+    /// <exception cref="DownloadException">If file size not match with chunk length</exception>
     private void ThrowIfFileSizeNotMatchWithChunkLength()
     {
         _logger?.LogDebug("Compare file size with chunk length for chunk {ChunkId}", _chunk.Id);
 
-        // If the chunk has a length, the file size should be compared to the chunk length
-        // Otherwise, the file size should be compared to the chunk position
-        var chunkLength = _chunk.Length > 0 ? _chunk.Length : _chunk.Position;
-        if (_storage.GetChunkFileLength(_chunk.Id) != chunkLength)
+        var fileLength = _storage.GetChunkFileLength(_chunk.Id);
+        var expectedLength = _chunk.Length > 0 ? _chunk.Length : _chunk.Position;
+
+        _logger?.LogInformation("Chunk {ChunkId}: FileSize={FileSize}, Expected={Expected}, Position={Position}", _chunk.Id, fileLength, expectedLength, _chunk.Position);
+
+        if (fileLength != expectedLength)
+        {
+            _logger?.LogError("File size mismatch for chunk {ChunkId}: File={FileSize}, Expected={Expected}", _chunk.Id, fileLength, expectedLength);
+            _logger?.LogDebug("Chunk details: Start={Start}, End={End}, Length={Length}, FilePosition={FilePos}", _chunk.Start, _chunk.End, _chunk.Length, _chunk.FilePosition);
+
             throw DownloadException.CreateDownloadException(DownloadException.FileSizeNotMatchWithChunkLength);
+        }
+
+        _logger?.LogInformation("File size validation passed for chunk {ChunkId}", _chunk.Id);
     }
 
     /// <summary>

@@ -90,15 +90,16 @@ public class SharedMemoryBufferedStream : IAsyncDisposable
     /// <exception cref="ObjectDisposedException">If the current <see cref="SharedMemoryBufferedStream"/> instance is disposed.</exception>
     public void CreateBuffer(string chunkId, string filePath, long offset, SeekOrigin origin, CancellationToken cancellationToken)
     {
+        // Check if the current instance is disposed
         ObjectDisposedException.ThrowIf(_disposed, this);
 
         _logger?.LogDebug("Creating a memory buffer for chunk {ChunkId} with file path '{FilePath}'", chunkId, filePath);
 
-        if (cancellationToken.IsCancellationRequested || _disposed)
-            return;
-
+        // Get the chunk buffer
         var buffer = _chunkData.GetOrAdd(chunkId, id => new ChunkBuffer(id, filePath));
-        buffer.Seek(offset, origin);
+        // Seek the buffer to the specified offset
+        if (buffer.FileStream?.Position != offset)
+            buffer.Seek(offset, origin);
 
         _logger?.LogDebug("Memory buffer created for chunk {ChunkId} with file path '{FilePath}'", chunkId, filePath);
     }
@@ -141,16 +142,15 @@ public class SharedMemoryBufferedStream : IAsyncDisposable
             // Update memory usage
             Interlocked.Add(ref _currentMemoryUsage, count);
 
-            // Check if we need to flush to disk
-            if (IsMemoryLimitReached)
-                await FlushToDiskAsync(cancellationToken).ConfigureAwait(false);
-
             _logger?.LogDebug("{BytesLength} bytes added to the chunk {ChunkId} memory buffer", count, chunkId);
         }
         finally
         {
             chunkLock.Release();
         }
+
+        // Release memory
+        await ReleaseMemoryAsync(cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -191,27 +191,17 @@ public class SharedMemoryBufferedStream : IAsyncDisposable
     /// <param name="cancellationToken">A token to cancel the operation.</param>
     public async Task FlushAllAsync(CancellationToken cancellationToken)
     {
-        if (_disposed)
+        // Check if the stream is disposed or operation cancelled
+        if (cancellationToken.IsCancellationRequested || _disposed)
+        {
+            _logger?.LogDebug("Flush all chunks to disk was canceled or the stream is disposed");
             return;
-
-        try
-        {
-            await LockChunksAsync().ConfigureAwait(false);
-
-            _logger?.LogDebug("Flushing all chunks to disk");
-
-            if (cancellationToken.IsCancellationRequested || _disposed)
-            {
-                _logger?.LogDebug("Flush all chunks to disk was canceled or the stream is disposed");
-                return;
-            }
-
-            await FlushToDiskAsync(cancellationToken).ConfigureAwait(false);
         }
-        finally
-        {
-            ReleaseLocks();
-        }
+
+        _logger?.LogDebug("Flushing all chunks to disk");
+
+        // Release memory
+        await ReleaseMemoryAsync(cancellationToken);
     }
 
     /// <summary>
@@ -235,7 +225,7 @@ public class SharedMemoryBufferedStream : IAsyncDisposable
         if (!_chunkData.TryGetValue(chunkId, out var chunkData))
             return;
 
-        chunkData.Seek(offset, SeekOrigin.Begin);
+        chunkData.Seek(offset, origin);
         _logger?.LogDebug("Set chunk {ChunkId} file position to {Offset}", chunkId, offset);
     }
 
@@ -317,6 +307,34 @@ public class SharedMemoryBufferedStream : IAsyncDisposable
     #region Helpers
 
     /// <summary>
+    /// Releases the memory used by the buffer.
+    /// </summary>
+    /// <param name="cancellationToken">A token to cancel the operation.</param>
+    /// <returns>A task representing the asynchronous operation.</returns>
+    private async Task ReleaseMemoryAsync(CancellationToken cancellationToken)
+    {
+        // Check if memory limit has been reached
+        if (!IsMemoryLimitReached)
+            return;
+
+        try
+        {
+            // Lock the chunks to prevent modifications while releasing memory
+            await LockChunksAsync().ConfigureAwait(false);
+
+            // Check again before releasing memory
+            if (cancellationToken.IsCancellationRequested || _disposed || !IsMemoryLimitReached)
+                return;
+
+            await FlushToDiskAsync(cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            ReleaseLocks();
+        }
+    }
+
+    /// <summary>
     /// Flushes all chunks to disk.
     /// </summary>
     /// <param name="cancellationToken">A token to cancel the operation.</param>
@@ -345,13 +363,14 @@ public class SharedMemoryBufferedStream : IAsyncDisposable
 
         // Ensure file stream is created
         chunk.CreateStreamIfNull();
-        chunk.Seek(chunk.FilePosition, SeekOrigin.Begin);
+        // Always seek to the end of the file
+        chunk.Seek(0, SeekOrigin.End);
 
         // Write all packets to disk
         while (chunk.Packets.TryDequeue(out var packet))
         {
             await chunk.FileStream!.WriteAsync(packet.Data, cancellationToken).ConfigureAwait(false);
-            chunk.FilePosition += packet.Length;
+            chunk.FilePosition = chunk.FileStream.Position;
 
             // Update memory usage
             Interlocked.Add(ref _currentMemoryUsage, -packet.Length);
