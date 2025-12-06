@@ -70,8 +70,6 @@ internal class ChunkBuffer
     /// <param name="origin">Specifies the beginning, the end, or the current position as the reference point for offset.</param>
     public void Seek(long offset, SeekOrigin origin)
     {
-        CreateStreamIfNull();
-
         // Seek the underlying FileStream using the given origin and offset,
         // then set FilePosition to the actual stream position.
         var newPos = FileStream!.Seek(offset, origin);
@@ -89,7 +87,6 @@ internal class ChunkBuffer
     /// <param name="length">The desired length of the current stream in bytes.</param>
     public void SetLength(long length)
     {
-        CreateStreamIfNull();
         if (FilePosition > length)
             FilePosition = length;
 
