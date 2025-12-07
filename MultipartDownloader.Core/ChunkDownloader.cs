@@ -5,7 +5,6 @@ using MultipartDownloader.Core.Enums;
 using MultipartDownloader.Core.Extensions.Helpers;
 using System.ComponentModel;
 using System.Net.Http.Headers;
-using System.Threading.Tasks;
 
 namespace MultipartDownloader.Core;
 
@@ -109,7 +108,8 @@ internal class ChunkDownloader
             cancelToken.ThrowIfCancellationRequested();
             // Can't handle this exception
             _logger?.LogCritical(error, "Fatal error on download chunk {ChunkId}.", _chunk.Id);
-            throw;
+
+            throw new InvalidOperationException($"Fatal error on download chunk {_chunk.Id}", error);
         }
     }
 
@@ -135,16 +135,12 @@ internal class ChunkDownloader
             return;
 
         // Create buffer for chunk
-        _storage.CreateBuffer(_chunk.Id, _chunk.TempFilePath);
+        _storage.CreateBuffer(_chunk.Id, _chunk.TempFilePath, _chunk.FilePosition, SeekOrigin.Begin);
         _logger?.LogDebug("Memory buffered stream created for chunk {ChunkId}.", _chunk.Id);
 
         // Sync storage with chunk position
         _logger?.LogDebug("Syncing chunk {ChunkId} position with storage...", _chunk.Id);
         await SyncPositionWithStorageAsync();
-
-        // Set chunk file position
-        await _storage.SetChunkFilePositionAsync(_chunk.Id, _chunk.FilePosition, SeekOrigin.Begin);
-        _logger?.LogDebug("Chunk {ChunkId} file position set to {FilePosition}.", _chunk.Id, _chunk.FilePosition);
 
         _logger?.LogDebug("DownloadChunk of the chunk {ChunkId}.", _chunk.Id);
         var requestMsg = request.GetRequest();
@@ -178,11 +174,14 @@ internal class ChunkDownloader
             // close stream on cancellation because, it doesn't work on .Net Framework
             await using var _ = cancelToken.Register(stream.Close);
 
-            // Create buffer
-            var buffer = new byte[_configuration.BufferBlockSize];
-
             while (readSize > 0 && _chunk.CanWrite)
             {
+                // Create buffer
+                var dynamicBlockSize = CalculateDynamicBlockSize();
+                var buffer = new byte[dynamicBlockSize];
+
+                _logger?.LogDebug("Chunk {ChunkId} read buffer size set to {BufferSize}", _chunk.Id, dynamicBlockSize);
+
                 cancelToken.ThrowIfCancellationRequested();
                 await pauseToken.WaitWhilePausedAsync().ConfigureAwait(false);
                 using var innerCts = CancellationTokenSource.CreateLinkedTokenSource(cancelToken);
@@ -320,26 +319,12 @@ internal class ChunkDownloader
         if (cancellationToken.IsCancellationRequested)
             return;
 
-        _logger?.LogDebug("Flush chunk {ChunkId} storage", _chunk.Id);
-
-        var beforeFlushPosition = await _storage.GetChunkFilePositionAsync(_chunk.Id);
-        var memoryLengthBefore = await _storage.GetChunkMemoryLengthAsync(_chunk.Id);
+        _logger?.LogDebug("Flush chunk {ChunkId} to storage", _chunk.Id);
 
         await _storage.FlushChunkAsync(_chunk.Id, cancellationToken).ConfigureAwait(false);
+        _chunk.FilePosition = await _storage.GetChunkFilePositionAsync(_chunk.Id);
 
-        var afterFlushPosition = await _storage.GetChunkFilePositionAsync(_chunk.Id);
-        var memoryLengthAfter = await _storage.GetChunkMemoryLengthAsync(_chunk.Id);
-
-        if (afterFlushPosition != beforeFlushPosition + memoryLengthBefore)
-        {
-            _logger?.LogError("Flush validation failed! Chunk {ChunkId}: BeforePos={Before}, AfterPos={After}, Memory={Memory}",
-                _chunk.Id, beforeFlushPosition, afterFlushPosition, memoryLengthBefore);
-        }
-
-        _chunk.FilePosition = afterFlushPosition;
-
-        _logger?.LogDebug("Chunk {ChunkId} storage flushed: Before={Before}, After={After}, MemoryBefore={MemBefore}, MemoryAfter={MemAfter}",
-            _chunk.Id, beforeFlushPosition, afterFlushPosition, memoryLengthBefore, memoryLengthAfter);
+        _logger?.LogDebug("Flush chunk {ChunkId} to storage completed successfully. File position: {Position}", _chunk.Id, _chunk.FilePosition);
     }
 
     /// <summary>
@@ -364,6 +349,18 @@ internal class ChunkDownloader
         }
 
         _logger?.LogInformation("File size validation passed for chunk {ChunkId}", _chunk.Id);
+    }
+
+    /// <summary>
+    /// Calculates the dynamic block size for each buffer.
+    /// </summary>
+    /// <returns>The dynamic block size in bytes.</returns>
+    private int CalculateDynamicBlockSize()
+    {
+        if (_configuration.MaximumSpeedPerChunk > _configuration.BufferBlockSize)
+            return _configuration.BufferBlockSize;
+
+        return (int)(_configuration.MaximumSpeedPerChunk / _configuration.ActiveChunks);
     }
 
     /// <summary>
@@ -398,5 +395,4 @@ internal class ChunkDownloader
 
         return defaultTimeout;
     }
-
 }

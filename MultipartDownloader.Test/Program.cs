@@ -1,18 +1,16 @@
 ﻿using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using MultipartDownloader.Core;
+using MultipartDownloader.Core.CustomEventArgs;
+using System.ComponentModel;
 using System.Reflection;
 
 namespace MultipartDownloader.Test;
 
 internal class Program
 {
-    private static bool _isPaused;
-    private static DownloadPackage? _downloadPackage;
-    private static bool _isMerging;
-    private static bool _isMerged;
-
     private static ILogger<Program>? _logger;
+    private static bool _isCompleted;
 
     private static async Task Main(string[] args)
     {
@@ -28,76 +26,11 @@ internal class Program
         var filePath = Path.Combine(desktopDirectory, fileName);
         _ = downloadService.DownloadFileTaskAsync(url, filePath);
 
-        //while (!_isMerged)
-        //{
-        //    if (_isMerging)
-        //    {
-        //        await Task.Delay(100);
-        //        continue;
-        //    }
-
-        //    Console.WriteLine();
-        //    Console.WriteLine("Please choose:");
-        //    Console.WriteLine("P: Pause/Resume");
-        //    Console.WriteLine("S: Stop/Start");
-        //    Console.WriteLine("Esc: Close");
-        //    Console.WriteLine();
-
-        //    switch (Console.ReadKey().Key)
-        //    {
-        //        case ConsoleKey.P:
-        //            {
-        //                if (_isMerging)
-        //                    break;
-
-        //                if (_isPaused)
-        //                {
-        //                    downloadService.Resume();
-        //                    _isPaused = false;
-        //                }
-        //                else
-        //                {
-        //                    downloadService.Pause();
-        //                    _isPaused = true;
-        //                }
-
-        //                break;
-        //            }
-
-        //        case ConsoleKey.S:
-        //            {
-        //                if (_isMerging)
-        //                    break;
-
-        //                if (_downloadPackage == null)
-        //                {
-        //                    await downloadService.CancelTaskAsync();
-        //                    _downloadPackage = downloadService.Package;
-        //                }
-        //                else
-        //                {
-        //                    var package = _downloadPackage;
-        //                    configuration = GetDownloadConfiguration(Path.Combine(desktopDirectory, "NewFolder"));
-        //                    downloadService = GetDownloadService(configuration, services);
-        //                    _ = downloadService.DownloadFileTaskAsync(package);
-        //                    _downloadPackage = null;
-        //                }
-
-        //                break;
-        //            }
-
-        //        case ConsoleKey.Escape:
-        //            {
-        //                if (_isMerging)
-        //                    break;
-
-        //                return;
-        //            }
-        //    }
-        //}
-
         Console.ReadKey();
-        await downloadService.CancelTaskAsync().ConfigureAwait(false);
+
+        if (!_isCompleted)
+            await downloadService.CancelTaskAsync().ConfigureAwait(false);
+
         await Task.Delay(5000).ConfigureAwait(false);
     }
 
@@ -115,9 +48,9 @@ internal class Program
 
         serviceCollection.AddLogging(builder =>
         {
-            builder.SetMinimumLevel(LogLevel.Debug);
+            builder.SetMinimumLevel(LogLevel.Information);
             builder.AddConsole();
-            builder.AddFile(logFilePath, minimumLevel: LogLevel.Debug);
+            builder.AddFile(logFilePath, minimumLevel: LogLevel.Information);
         });
 
         return serviceCollection.BuildServiceProvider();
@@ -132,7 +65,7 @@ internal class Program
             //MaximumBytesPerSecond = 64 * 1024,
             ParallelDownload = true,
             ReserveStorageSpaceBeforeStartingDownload = true,
-            MaximumMemoryBufferBytes = 5 * 1024 * 1024,
+            MaximumMemoryBufferBytes = 2 * 1024 * 1024,
             MaxRestartWithoutClearTempFile = 5,
             //MaximumBytesPerSecondForMerge = 1024 * 1024 // 1 MB/s
             MaximumBytesPerSecondForMerge = 0 // No limit
@@ -153,19 +86,17 @@ internal class Program
         return downloadService;
     }
 
-    private static void DownloadServiceOnMergeStarted(object? sender, Core.CustomEventArgs.MergeStartedEventArgs e)
+    private static void DownloadServiceOnMergeStarted(object? sender, MergeStartedEventArgs e)
     {
-        _isMerging = true;
         _logger?.LogInformation("Merge started...");
     }
 
-    private static void DownloadServiceOnMergeProgressChanged(object? sender, Core.CustomEventArgs.MergeProgressChangedEventArgs e)
+    private static void DownloadServiceOnMergeProgressChanged(object? sender, MergeProgressChangedEventArgs e)
     {
         _logger?.LogInformation("Merge progress: {Progress}", e.Progress);
-        _isMerged = e.Progress >= 100;
     }
 
-    private static void DownloadServiceOnDownloadFileCompleted(object? sender, System.ComponentModel.AsyncCompletedEventArgs e)
+    private static void DownloadServiceOnDownloadFileCompleted(object? sender, AsyncCompletedEventArgs e)
     {
         if (e.Cancelled)
         {
@@ -179,19 +110,16 @@ internal class Program
         {
             _logger?.LogInformation("Completed");
         }
+
+        _isCompleted = true;
     }
 
-    private static void DownloadServiceOnChunkDownloadRestarted(object? sender, Core.CustomEventArgs.ChunkDownloadRestartedEventArgs e)
+    private static void DownloadServiceOnChunkDownloadRestarted(object? sender, ChunkDownloadRestartedEventArgs e)
     {
-        //var currentColor = Console.ForegroundColor;
-        //Console.ForegroundColor = ConsoleColor.Red;
-        //Console.WriteLine($"Chunk {e.ChunkId} restarted. Reason: {e.Reason}");
-        //Console.ForegroundColor = currentColor;
-
         _logger?.LogInformation("Chunk {ChunkId} restarted. Reason: {Reason}", e.ChunkId, e.Reason);
     }
 
-    private static void DownloadServiceOnDownloadProgressChanged(object? sender, Core.CustomEventArgs.DownloadProgressChangedEventArgs e)
+    private static void DownloadServiceOnDownloadProgressChanged(object? sender, DownloadProgressChangedEventArgs e)
     {
         _logger?.LogInformation("Download progress: {ProgressPercentage}, Received bytes size: {Size}", e.ProgressPercentage, e.ProgressedByteSize);
     }

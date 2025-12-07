@@ -109,7 +109,7 @@ public class SharedMemoryBufferedStream : IAsyncDisposable
     /// <param name="chunkId">The ID of the chunk to create a buffer for.</param>
     /// <param name="filePath">The file path associated with the chunk.</param>
     /// <exception cref="ObjectDisposedException">If the current <see cref="SharedMemoryBufferedStream"/> instance is disposed.</exception>
-    public void CreateBuffer(string chunkId, string filePath)
+    public void CreateBuffer(string chunkId, string filePath, long offset, SeekOrigin origin)
     {
         // Check if the current instance is disposed
         ObjectDisposedException.ThrowIf(_disposed, this);
@@ -117,7 +117,9 @@ public class SharedMemoryBufferedStream : IAsyncDisposable
         _logger?.LogDebug("Creating a memory buffer for chunk {ChunkId} with file path '{FilePath}'", chunkId, filePath);
 
         // Get or add the chunk buffer
-        _chunkData.GetOrAdd(chunkId, id => new ChunkBuffer(id, filePath));
+        var chunkBuffer = _chunkData.GetOrAdd(chunkId, id => new ChunkBuffer(id, filePath));
+        // Seek to the specified offset
+        chunkBuffer.Seek(offset, origin);
 
         _logger?.LogDebug("Memory buffer created for chunk {ChunkId} with file path '{FilePath}'", chunkId, filePath);
     }
@@ -155,8 +157,12 @@ public class SharedMemoryBufferedStream : IAsyncDisposable
                     return;
                 }
 
+                // Copy buffer
+                var copiedBuffer = new byte[count];
+                Buffer.BlockCopy(buffer, offset, copiedBuffer, 0, count);
+
                 // Add data to chunk
-                var packet = new Packet(buffer, offset, count);
+                var packet = new Packet(copiedBuffer, offset, count);
                 chunkData.Packets.Enqueue(packet);
 
                 // Update memory usage
