@@ -85,7 +85,7 @@ public abstract class AbstractDownloadService : IDownloadService, IDisposable, I
     /// </summary>
     public DownloadStatus Status
     {
-        get => Package?.Status ?? DownloadStatus.None;
+        get => Package.Status;
         set => Package.Status = value;
     }
 
@@ -93,6 +93,11 @@ public abstract class AbstractDownloadService : IDownloadService, IDisposable, I
     /// The Socket client for the download service.
     /// </summary>
     protected SocketClient? Client { get; private set; }
+
+    /// <summary>
+    /// The shared memory buffered stream for all chunks.
+    /// </summary>
+    protected SharedMemoryBufferedStream? Storage { get; set; }
 
     /// <summary>
     /// Event triggered when the download file operation is completed.
@@ -324,7 +329,7 @@ public abstract class AbstractDownloadService : IDownloadService, IDisposable, I
         }
         finally
         {
-            SingleInstanceSemaphore?.Release();
+            SingleInstanceSemaphore.Release();
         }
     }
 
@@ -414,7 +419,10 @@ public abstract class AbstractDownloadService : IDownloadService, IDisposable, I
             Package.Clear();
         }
 
-        TaskCompletion?.TrySetResult(e);
+        // Set result asynchronously to avoid deadlocks
+        if (TaskCompletion != null)
+            Task.Run(() => TaskCompletion.TrySetResult(e));
+
         DownloadFileCompleted?.Invoke(this, e);
     }
 
@@ -454,7 +462,7 @@ public abstract class AbstractDownloadService : IDownloadService, IDisposable, I
     {
         var totalFileSize = Package.TotalFileSize;
         var numberOfChunks = Package.Chunks.Length;
-        var chunksDirectoryPath = Package.Chunks.Length > 1 ? (Path.GetDirectoryName(Package.Chunks[0].TempFilePath) ?? string.Empty) : string.Empty;
+        var chunksDirectoryPath = Package.Chunks.Length > 1 ? Path.GetDirectoryName(Package.Chunks[0].TempFilePath) ?? string.Empty : string.Empty;
         var eventArgs = new MergeStartedEventArgs(totalFileSize, numberOfChunks, chunksDirectoryPath);
         MergeStarted?.Invoke(this, eventArgs);
     }
