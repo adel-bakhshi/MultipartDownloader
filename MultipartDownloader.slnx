@@ -1,0 +1,5 @@
+<Solution>
+  <Project Path="MultipartDownloader.Core/MultipartDownloader.Core.csproj" />
+  <Project Path="MultipartDownloader.Test/MultipartDownloader.Test.csproj" />
+  <Project Path="MultipartDownloader.Tests/MultipartDownloader.Tests.csproj" />
+</Solution>

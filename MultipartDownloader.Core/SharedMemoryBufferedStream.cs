@@ -381,9 +381,6 @@ public class SharedMemoryBufferedStream : IAsyncDisposable
             var disposalTasks = _chunkData.Values.Select(chunk => chunk.ClearAsync()).ToArray();
             await Task.WhenAll(disposalTasks).ConfigureAwait(false);
 
-            // Add a small delay to ensure file is fully written
-            await Task.Delay(100).ConfigureAwait(false);
-
             _chunkData.Clear();
 
             // Dispose release memory lock

@@ -163,7 +163,7 @@ public class DownloadConfiguration : ICloneable, INotifyPropertyChanged
     }
 
     /// <summary>
-    /// Gets or sets the delay before retrying a failed chunk download.
+    /// Gets or sets the delay in milliseconds before retrying a failed chunk download.
     /// </summary>
     public int RetryDelay
     {

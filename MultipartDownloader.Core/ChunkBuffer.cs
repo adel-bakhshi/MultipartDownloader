@@ -72,13 +72,7 @@ internal class ChunkBuffer
     {
         // Seek the underlying FileStream using the given origin and offset,
         // then set FilePosition to the actual stream position.
-        var newPos = FileStream!.Seek(offset, origin);
-
-        // Ensure file position is never less than 0
-        if (newPos < 0)
-            newPos = 0;
-
-        FilePosition = newPos;
+        FilePosition = FileStream!.Seek(offset, origin);
     }
 
     /// <summary>
@@ -102,8 +96,6 @@ internal class ChunkBuffer
             return;
 
         await FileStream.DisposeAsync().ConfigureAwait(false);
-        // Wait for the file stream to be disposed before setting it to null.
-        await Task.Delay(100).ConfigureAwait(false);
         FileStream = null;
     }
 }

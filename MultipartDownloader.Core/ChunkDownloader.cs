@@ -360,7 +360,9 @@ internal class ChunkDownloader
         if (_configuration.MaximumSpeedPerChunk > _configuration.BufferBlockSize)
             return _configuration.BufferBlockSize;
 
-        return (int)(_configuration.MaximumSpeedPerChunk / _configuration.ActiveChunks);
+        var bufferBlockSize = (int)(_configuration.MaximumSpeedPerChunk / _configuration.ActiveChunks);
+        // Ensure the block size is at least 1024 bytes
+        return Math.Max(bufferBlockSize, 1024);
     }
 
     /// <summary>
