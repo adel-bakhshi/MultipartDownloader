@@ -17,8 +17,8 @@ internal class Program
         var services = CreateServiceCollection();
         _logger = services.GetRequiredService<ILogger<Program>>();
 
-        const string url = "https://dl2.soft98.ir/soft/i/Internet.Download.Manager.6.42.57.rar?1764922092";
-        const string fileName = "Internet.Download.Manager.6.42.57.rar";
+        const string url = "https://aec-333.pishtazmovie.ir/dl1vgdl/vgtrldl1/dl1/SoftWare/apk/soundtrack/2024/Nov/Silent-Hill-2-Remake-Soundtrack-by-Akira-Yamaoka_vgdl.ir.rar";
+        const string fileName = "Silent-Hill-2-Remake-Soundtrack-by-Akira-Yamaoka_vgdl.ir.rar";
         var desktopDirectory = Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
         var configuration = GetDownloadConfiguration(desktopDirectory);
         var downloadService = GetDownloadService(configuration, services);
@@ -64,8 +64,8 @@ internal class Program
             ChunkCount = 8,
             //MaximumBytesPerSecond = 64 * 1024,
             ParallelDownload = true,
-            ReserveStorageSpaceBeforeStartingDownload = true,
-            MaximumMemoryBufferBytes = 2 * 1024 * 1024,
+            ReserveStorageSpaceBeforeStartingDownload = false,
+            MaximumMemoryBufferBytes = 100 * 1024 * 1024,
             MaxRestartWithoutClearTempFile = 5,
             //MaximumBytesPerSecondForMerge = 1024 * 1024 // 1 MB/s
             MaximumBytesPerSecondForMerge = 0 // No limit
