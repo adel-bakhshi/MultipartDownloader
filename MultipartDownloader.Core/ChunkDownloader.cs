@@ -13,6 +13,7 @@ internal class ChunkDownloader
     #region Private fields
 
     private const int TimeoutIncrement = 10;
+    private const int FileSizeMisMatchErrorCode = 0;
 
     private readonly Chunk _chunk;
     private readonly DownloadConfiguration _configuration;
@@ -63,24 +64,7 @@ internal class ChunkDownloader
             await DownloadChunkAsync(downloadRequest, pause, cancelToken).ConfigureAwait(false);
             return _chunk;
         }
-        catch (TaskCanceledException error) when (!cancelToken.IsCancellationRequested)
-        {
-            // when stream reader timeout occurred
-            _logger?.LogError(error, "Task time-outed on download chunk {ChunkId}. Retry ...", _chunk.Id);
-            return await ContinueWithDelayAsync(downloadRequest, pause, cancelToken).ConfigureAwait(false);
-        }
-        catch (ObjectDisposedException error) when (!cancelToken.IsCancellationRequested)
-        {
-            // when stream reader cancel/timeout occurred
-            _logger?.LogError(error, "Disposed object error on download chunk {ChunkId}. Retry ...", _chunk.Id);
-            return await ContinueWithDelayAsync(downloadRequest, pause, cancelToken).ConfigureAwait(false);
-        }
-        catch (HttpRequestException error) when (!cancelToken.IsCancellationRequested && _chunk.CanTryAgainOnFailure())
-        {
-            _logger?.LogError(error, "HTTP request error on download chunk {ChunkId}. Retry ...", _chunk.Id);
-            return await ContinueWithDelayAsync(downloadRequest, pause, cancelToken).ConfigureAwait(false);
-        }
-        catch (DownloadException error) when (error.ErrorCode == DownloadException.FileSizeNotMatchWithChunkLength) // when file size in not match with chunk length
+        catch (DownloadException error) when (error.ErrorCode == FileSizeMisMatchErrorCode) // when file size in not match with chunk length
         {
             // Log error data
             _logger?.LogError(error, "File size not match with chunk length for chunk {ChunkId} with retry", _chunk.Id);
@@ -96,37 +80,42 @@ internal class ChunkDownloader
             }
 
             // Re-request and continue downloading
-            return await ContinueWithDelayAsync(downloadRequest, pause, cancelToken).ConfigureAwait(false);
-        }
-        catch (Exception error) when (!cancelToken.IsCancellationRequested && error.IsMomentumError() && _chunk.CanTryAgainOnFailure())
-        {
-            _logger?.LogError(error, "Error on download chunk {ChunkId}. Retry ...", _chunk.Id);
-            return await ContinueWithDelayAsync(downloadRequest, pause, cancelToken).ConfigureAwait(false);
+            return await ContinueWithDelayAsync(error, downloadRequest, pause, cancelToken).ConfigureAwait(false);
         }
         catch (Exception error)
         {
-            cancelToken.ThrowIfCancellationRequested();
-            // Can't handle this exception
-            _logger?.LogCritical(error, "Fatal error on download chunk {ChunkId}.", _chunk.Id);
+            if (!cancelToken.IsCancellationRequested &&
+                error.IsMomentumError() &&
+                _chunk.CanTryAgainOnFailure())
+            {
+                _logger?.LogError(error, "Error on download chunk {ChunkId}. Retry ...", _chunk.Id);
+                return await ContinueWithDelayAsync(error, downloadRequest, pause, cancelToken).ConfigureAwait(false);
+            }
 
+            // Can't handle this exception
+            _logger?.LogError(error, "Fatal error on download chunk {ChunkId}.", _chunk.Id);
             throw new InvalidOperationException($"Fatal error on download chunk {_chunk.Id}", error);
         }
     }
 
-    private async ValueTask<Chunk> ContinueWithDelayAsync(Request request, PauseToken pause, CancellationToken cancelToken)
+    private async ValueTask<Chunk> ContinueWithDelayAsync(Exception exception, Request request, PauseToken pause, CancellationToken cancelToken)
     {
         if (cancelToken.IsCancellationRequested)
             return _chunk;
 
         _logger?.LogDebug("ContinueWithDelay of the chunk {ChunkId}", _chunk.Id);
-        await _client.ThrowIfIsNotSupportDownloadInRange(request).ConfigureAwait(false);
-        await Task.Delay(_chunk.RetryDelay, cancelToken).ConfigureAwait(false);
-        // Increasing reading timeout to reduce stress and conflicts
-        _chunk.ReadTimeout += 5000;
-        // Increasing delay between each retry
-        _chunk.RetryDelay = Math.Min(_chunk.RetryDelay + TimeoutIncrement, 2000);
-        // re-request and continue downloading
-        return await DownloadAsync(request, pause, cancelToken).ConfigureAwait(false);
+        if (await _client.IsSupportDownloadInRangeAsync(request).ConfigureAwait(false))
+        {
+            await Task.Delay(_chunk.RetryDelay, cancelToken).ConfigureAwait(false);
+            // Increasing reading timeout to reduce stress and conflicts
+            _chunk.ReadTimeout += 5000;
+            // Increasing delay between each retry
+            _chunk.RetryDelay = Math.Min(_chunk.RetryDelay + TimeoutIncrement, 2000);
+            // re-request and continue downloading
+            return await DownloadAsync(request, pause, cancelToken).ConfigureAwait(false);
+        }
+
+        throw exception;
     }
 
     private async ValueTask DownloadChunkAsync(Request request, PauseToken pauseToken, CancellationToken cancelToken)
@@ -152,7 +141,9 @@ internal class ChunkDownloader
 
         _sourceStream = new ThrottledStream(responseStream, _configuration.MaximumSpeedPerChunk);
         await ReadStreamAsync(_sourceStream, pauseToken, cancelToken).ConfigureAwait(false);
-        await _sourceStream.DisposeAsync();
+
+        if (_sourceStream != null)
+            await _sourceStream.DisposeAsync().ConfigureAwait(false);
     }
 
     private void SetRequestRange(HttpRequestMessage request)
@@ -204,7 +195,7 @@ internal class ChunkDownloader
                 if (readSize <= 0)
                     continue;
 
-                // ReSharper disable once PossiblyMistakenUseOfCancellationToken
+                // Write data to the storage
                 await _storage.WriteAsync(_chunk.Id, buffer, 0, readSize, cancelToken).ConfigureAwait(false);
 
                 _logger?.LogDebug("Write {ReadSize} bytes in the chunk {ChunkId}", readSize, _chunk.Id);
@@ -345,7 +336,7 @@ internal class ChunkDownloader
             _logger?.LogError("File size mismatch for chunk {ChunkId}: File={FileSize}, Expected={Expected}", _chunk.Id, fileLength, expectedLength);
             _logger?.LogDebug("Chunk details: Start={Start}, End={End}, Length={Length}, FilePosition={FilePos}", _chunk.Start, _chunk.End, _chunk.Length, _chunk.FilePosition);
 
-            throw DownloadException.CreateDownloadException(DownloadException.FileSizeNotMatchWithChunkLength);
+            throw new DownloadException(FileSizeMisMatchErrorCode, "The file size does not match the downloaded size.");
         }
 
         _logger?.LogInformation("File size validation passed for chunk {ChunkId}", _chunk.Id);

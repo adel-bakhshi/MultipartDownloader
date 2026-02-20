@@ -8,15 +8,23 @@ namespace MultipartDownloader.Core;
 /// </summary>
 public class DownloadPackage : IDisposable, IAsyncDisposable
 {
+    #region Private Fields
+
+    private readonly SemaphoreSlim _stateSemaphore = new(1, 1);
+
+    #endregion Private Fields
+
+    #region Properties
+
     /// <summary>
     /// Gets or sets a value indicating whether the package is currently being saved.
     /// </summary>
-    public bool IsSaving { get; set; }
+    public bool IsSaving => Status is DownloadStatus.Running or DownloadStatus.Paused;
 
     /// <summary>
     /// Gets or sets a value indicating whether the save operation is complete.
     /// </summary>
-    public bool IsSaveComplete { get; set; }
+    public bool IsSaveComplete => Status is DownloadStatus.Completed;
 
     /// <summary>
     /// Gets or sets the progress of the save operation.
@@ -44,6 +52,16 @@ public class DownloadPackage : IDisposable, IAsyncDisposable
     public string FileName { get; set; } = string.Empty;
 
     /// <summary>
+    /// Gets or sets the extension of the file to be downloaded.
+    /// </summary>
+    public string DownloadingFileExtension { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Gets the file name of the downloading file.
+    /// </summary>
+    public string DownloadingFileName => FileName + DownloadingFileExtension;
+
+    /// <summary>
     /// Gets or sets the chunks of the file being downloaded.
     /// </summary>
     public Chunk[] Chunks { get; set; } = [];
@@ -63,10 +81,12 @@ public class DownloadPackage : IDisposable, IAsyncDisposable
     /// </summary>
     public string TemporarySavePath { get; set; } = string.Empty;
 
+    #endregion Properties
+
     /// <summary>
     /// Clears the chunks and resets the package.
     /// </summary>
-    public void Clear()
+    public void ClearChunks()
     {
         if (Chunks.Length > 0)
         {
@@ -122,20 +142,79 @@ public class DownloadPackage : IDisposable, IAsyncDisposable
     }
 
     /// <summary>
+    /// Sets the state of the download package.
+    /// </summary>
+    /// <param name="state">The state of the download.</param>
+    public void SetState(DownloadStatus state)
+    {
+        try
+        {
+            _stateSemaphore.Wait();
+            Status = state;
+        }
+        finally
+        {
+            _stateSemaphore.Release();
+        }
+    }
+
+    /// <summary>
+    /// Sets the final state for completed, stopped or failed downloads.
+    /// </summary>
+    /// <param name="state">The state of the download.</param>
+    /// <returns>A task that represents the asynchronous operation.</returns>
+    public async Task<bool> TrySetCompleteStateAsync(DownloadStatus state)
+    {
+        try
+        {
+            await _stateSemaphore.WaitAsync().ConfigureAwait(false);
+
+            // Check old state and return false if the old status was Failed or Completed.
+            // Because we can't change this status
+            if (Status is DownloadStatus.Failed or DownloadStatus.Completed)
+                return false;
+
+            Status = state;
+
+            switch (Status)
+            {
+                case DownloadStatus.Failed:
+                {
+                    await DisposeAsync().ConfigureAwait(false);
+                    break;
+                }
+
+                case DownloadStatus.Completed:
+                {
+                    ClearChunks();
+                    break;
+                }
+            }
+
+            return true;
+        }
+        finally
+        {
+            _stateSemaphore.Release();
+        }
+    }
+
+    /// <summary>
     /// Disposes of the download package, clearing the chunks and disposing of the storage.
     /// </summary>
     public void Dispose()
     {
-        Clear();
+        ClearChunks();
         GC.SuppressFinalize(this);
     }
 
     /// <summary>
     /// Disposes of the download package, clearing the chunks and disposing of the storage.
     /// </summary>
+    /// <returns>A task that represents the asynchronous operation.</returns>
     public async ValueTask DisposeAsync()
     {
-        Clear();
+        ClearChunks();
         GC.SuppressFinalize(this);
         await ValueTask.FromResult(true);
     }

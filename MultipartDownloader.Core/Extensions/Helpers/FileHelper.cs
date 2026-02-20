@@ -1,4 +1,7 @@
-﻿namespace MultipartDownloader.Core.Extensions.Helpers;
+﻿using MultipartDownloader.Core.CustomExceptions;
+using MultipartDownloader.Core.Enums;
+
+namespace MultipartDownloader.Core.Extensions.Helpers;
 
 internal static class FileHelper
 {
@@ -27,10 +30,20 @@ internal static class FileHelper
 
     public static long GetAvailableFreeSpaceOnDisk(string directory)
     {
+        if (string.IsNullOrEmpty(directory))
+            throw new ArgumentException("Path is null or empty", nameof(directory));
+
         try
         {
-            DriveInfo drive = new(directory);
-            return drive.IsReady ? drive.AvailableFreeSpace : 0L;
+            // Get the root of the filesystem containing the path
+            var root = Path.GetPathRoot(directory);
+
+            if (string.IsNullOrEmpty(root)) // UNC (\\server\share) paths not supported.
+                return 0L;
+
+            DriveInfo drive = new(root);
+
+            return drive.AvailableFreeSpace; // bytes available to the current user
         }
         catch (ArgumentException)
         {
@@ -39,16 +52,44 @@ internal static class FileHelper
         }
     }
 
-    public static void ThrowIfNotEnoughSpace(long actualNeededSize, params string[] directories)
+    public static void ThrowIfNotEnoughSpace(long actualNeededSize, string directory)
     {
-        if (directories == null)
+        if (string.IsNullOrWhiteSpace(directory))
             return;
 
-        foreach (string directory in directories)
+        long availableFreeSpace = GetAvailableFreeSpaceOnDisk(directory);
+        if (availableFreeSpace > 0 && availableFreeSpace < actualNeededSize)
+            throw new IOException($"There is not enough space on the disk `{directory}` with {availableFreeSpace} bytes");
+    }
+
+    public static bool CheckFileExistPolicy(this DownloadPackage package, FileExistPolicy policy)
+    {
+        if (string.IsNullOrWhiteSpace(package.FileName))
+            return false;
+
+        int filenameCounter = 1;
+        var filename = package.FileName;
+
+        while (File.Exists(filename))
         {
-            long availableFreeSpace = GetAvailableFreeSpaceOnDisk(directory);
-            if (availableFreeSpace > 0 && availableFreeSpace < actualNeededSize)
-                throw new IOException($"There is not enough space on the disk `{directory}` with {availableFreeSpace} bytes");
+            if (policy == FileExistPolicy.Exception)
+                throw new FileExistException(filename);
+
+            if (policy == FileExistPolicy.Delete)
+                File.Delete(filename);
+
+            if (policy == FileExistPolicy.Rename)
+            {
+                var dirPath = Path.GetDirectoryName(package.FileName) ?? Path.GetPathRoot(package.FileName);
+                filename = Path.Combine(dirPath!, Path.GetFileNameWithoutExtension(package.FileName) + $"({filenameCounter++})" + Path.GetExtension(package.FileName));
+                continue;
+            }
+
+            if (policy == FileExistPolicy.IgnoreDownload)
+                return false; // Ignore and don't download again!
         }
+
+        package.FileName = filename;
+        return true;
     }
 }

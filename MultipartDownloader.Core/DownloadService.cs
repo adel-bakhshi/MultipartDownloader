@@ -4,6 +4,7 @@ using MultipartDownloader.Core.CustomExceptions;
 using MultipartDownloader.Core.Enums;
 using MultipartDownloader.Core.Extensions.Helpers;
 using System.ComponentModel;
+using System.Diagnostics;
 
 namespace MultipartDownloader.Core;
 
@@ -90,25 +91,37 @@ public class DownloadService : AbstractDownloadService
             // Set storage disposed flag to true
             isStorageDisposed = true;
 
-            // Check if download is completed
-            if (Status == DownloadStatus.Running)
+            if (GlobalCancellationTokenSource?.IsCancellationRequested == true)
+            {
+                Logger?.LogWarning(null, "Download was cancelled");
+                await SendDownloadCompletionSignalAsync(DownloadStatus.Stopped).ConfigureAwait(false);
+            }
+            else if (Status is DownloadStatus.Running)
             {
                 Logger?.LogInformation("Download completed successfully");
+
                 // Merge chunks
                 await MergeChunksAsync().ConfigureAwait(false);
+
                 // Send the completion signal
-                SendDownloadCompletionSignal(DownloadStatus.Completed);
+                await SendDownloadCompletionSignalAsync(DownloadStatus.Completed).ConfigureAwait(false);
+            }
+            else
+            {
+                // Unknown STATE!
+                Logger?.LogInformation("Download completed but isn't successful!");
+                Debugger.Break();
             }
         }
         catch (OperationCanceledException exp)
         {
             Logger?.LogWarning(exp, "Download was cancelled");
-            SendDownloadCompletionSignal(DownloadStatus.Stopped, exp);
+            await SendDownloadCompletionSignalAsync(DownloadStatus.Stopped, exp).ConfigureAwait(false);
         }
         catch (Exception exp)
         {
             Logger?.LogError(exp, "Download failed with error: {ErrorMessage}", exp.Message);
-            SendDownloadCompletionSignal(DownloadStatus.Failed, exp);
+            await SendDownloadCompletionSignalAsync(DownloadStatus.Failed, exp).ConfigureAwait(false);
         }
         finally
         {
@@ -122,7 +135,6 @@ public class DownloadService : AbstractDownloadService
 
         // When we use the commented code, the stream always be open and the final file will be locked
         // So, we need to return a null stream to avoid this issue
-        //return Package.GetStorageStream();
         return Stream.Null;
     }
 
@@ -241,16 +253,10 @@ public class DownloadService : AbstractDownloadService
     /// <param name="state">The state of the download operation.</param>
     /// <param name="error">The exception that caused the download to fail, if any.</param>
     /// <returns>A task that represents the asynchronous operation.</returns>
-    private void SendDownloadCompletionSignal(DownloadStatus state, Exception? error = null)
+    private async Task SendDownloadCompletionSignalAsync(DownloadStatus state, Exception? error = null)
     {
-        // Another event throws before this
-        if (Status == DownloadStatus.Failed)
-            return;
-
-        Status = state;
-        Package.IsSaveComplete = Status == DownloadStatus.Completed && error == null;
-        Package.IsSaving = false; // Reset IsSaving flag regardless of status
-        OnDownloadFileCompleted(new AsyncCompletedEventArgs(error, Status == DownloadStatus.Stopped, Package));
+        if (await Package.TrySetCompleteStateAsync(state).ConfigureAwait(false))
+            OnDownloadFileCompleted(new AsyncCompletedEventArgs(error, state is DownloadStatus.Stopped, Package));
     }
 
     /// <summary>
@@ -278,7 +284,7 @@ public class DownloadService : AbstractDownloadService
         }
 
         if (string.IsNullOrEmpty(Options.ChunkFilesOutputDirectory))
-            throw DownloadException.CreateDownloadException(DownloadException.ChunkFilesDirectoryIsNotValid);
+            throw new DownloadException(message: "The chunk files directory is not valid.");
 
         var fileName = Path.GetFileNameWithoutExtension(Package.FileName);
         var temporaryPath = Path.Combine(Options.ChunkFilesOutputDirectory, fileName);
@@ -330,7 +336,7 @@ public class DownloadService : AbstractDownloadService
     }
 
     /// <summary>
-    /// Downloads the file in parallel chunks.
+    /// Downloads the file in parallel chunks with controlled concurrency.
     /// </summary>
     /// <param name="pauseToken">The pause token for pausing the download.</param>
     /// <returns>A task that represents the asynchronous operation.</returns>
@@ -343,24 +349,18 @@ public class DownloadService : AbstractDownloadService
 
             Logger?.LogDebug("Starting parallel download with {MaxConcurrentTasks} concurrent tasks", maxConcurrentTasks);
 
-            // Process tasks in batches to prevent overwhelming the system
-            for (var i = 0; i < chunkTasks.Count; i += maxConcurrentTasks)
+            var options = new ParallelOptions
             {
-                var batch = chunkTasks.Skip(i).Take(maxConcurrentTasks).ToList();
-                await Task.WhenAll(batch).ConfigureAwait(false);
+                MaxDegreeOfParallelism = maxConcurrentTasks,
+                CancellationToken = GlobalCancellationTokenSource!.Token
+            };
 
-                // Check for cancellation after each batch
-                if (GlobalCancellationTokenSource!.Token.IsCancellationRequested)
-                {
-                    Logger?.LogInformation("Download cancelled during batch processing");
-                    return;
-                }
-            }
+            await Parallel.ForEachAsync(chunkTasks, options, async (task, _) => await task.ConfigureAwait(false)).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
             Logger?.LogError(ex, "Error during parallel download: {ErrorMessage}", ex.Message);
-            throw;
+            throw new InvalidOperationException("An error occurred while downloading the chunks in parallel.", ex);
         }
     }
 
@@ -378,20 +378,20 @@ public class DownloadService : AbstractDownloadService
 
             foreach (Task task in chunkTasks)
             {
-                await task.ConfigureAwait(false);
-
                 // Check for cancellation after each chunk
                 if (GlobalCancellationTokenSource!.Token.IsCancellationRequested)
                 {
                     Logger?.LogInformation("Download cancelled during serial processing");
                     return;
                 }
+
+                await task.ConfigureAwait(false);
             }
         }
         catch (Exception ex)
         {
             Logger?.LogError(ex, "Error during serial download: {ErrorMessage}", ex.Message);
-            throw;
+            throw new InvalidOperationException("An error occurred while downloading the chunks in serial.");
         }
     }
 
@@ -426,7 +426,9 @@ public class DownloadService : AbstractDownloadService
 
         try
         {
-            cancellationTokenSource.Token.ThrowIfCancellationRequested();
+            if (cancellationTokenSource.IsCancellationRequested)
+                return chunk;
+
             return await chunkDownloader.DownloadAsync(request, pause, cancellationTokenSource.Token).ConfigureAwait(false);
         }
         catch

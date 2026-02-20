@@ -29,27 +29,36 @@ internal static class ExceptionHelper
 
     internal static bool IsMomentumError(this Exception error)
     {
-        if (error is HttpRequestException { StatusCode: HttpStatusCode.InternalServerError or HttpStatusCode.BadGateway })
-            return false;
-
-        if (error is HttpRequestException { StatusCode: HttpStatusCode.Ambiguous or HttpStatusCode.TooManyRequests or HttpStatusCode.ServiceUnavailable or HttpStatusCode.GatewayTimeout })
-            return true;
-
-        return error.IsRedirectError()
-            || error.HasSource("System.Net.Http", "System.Net.Sockets", "System.Net.Security")
-            || error.HasTypeOf(typeof(WebException), typeof(SocketException));
+        return error switch
+        {
+            ObjectDisposedException => true, // when stream reader cancel/timeout occurred
+            TaskCanceledException => true, // when cancel/timeout occurred
+            SocketException or WebException { Status: WebExceptionStatus.Timeout } => true, // acceptable errors for retry
+            HttpRequestException { StatusCode: HttpStatusCode.InternalServerError or HttpStatusCode.BadGateway } => false,
+            HttpRequestException
+            {
+                StatusCode: HttpStatusCode.Ambiguous
+                or HttpStatusCode.TooManyRequests
+                or HttpStatusCode.ServiceUnavailable
+                or HttpStatusCode.GatewayTimeout
+                or HttpStatusCode.RequestTimeout
+                or HttpStatusCode.Moved
+                or HttpStatusCode.Redirect
+                or HttpStatusCode.RedirectMethod
+                or HttpStatusCode.TemporaryRedirect
+                or HttpStatusCode.PermanentRedirect
+            } => true,
+            _ => error.HasSource("System.Net.Http", "System.Net.Sockets", "System.Net.Security")
+        };
     }
 
-    internal static bool HasTypeOf(this Exception exp, params Type[] types)
+    internal static bool HasTypeOf(this Exception error, params Type[] types)
     {
-        Exception? innerException = exp;
+        Exception? innerException = error;
         while (innerException != null)
         {
-            foreach (Type type in types)
-            {
-                if (innerException.GetType() == type)
-                    return true;
-            }
+            if (types.Any(type => innerException.GetType() == type))
+                return true;
 
             innerException = innerException.InnerException;
         }
@@ -57,12 +66,12 @@ internal static class ExceptionHelper
         return false;
     }
 
-    internal static bool HasSource(this Exception exp, params string[] sources)
+    internal static bool HasSource(this Exception error, params string[] sources)
     {
-        Exception? innerException = exp;
+        Exception? innerException = error;
         while (innerException != null)
         {
-            if (sources.Any(source => string.Equals(innerException.Source, source, StringComparison.OrdinalIgnoreCase)))
+            if (sources.Any(src => src.Equals(innerException.Source, StringComparison.OrdinalIgnoreCase)))
                 return true;
 
             innerException = innerException.InnerException;
@@ -97,7 +106,7 @@ internal static class ExceptionHelper
                         return true;
                     }
 
-                    if (status.Status == X509ChainStatusFlags.UntrustedRoot && certificate?.Subject == certificate?.Issuer)
+                    if (status.Status == X509ChainStatusFlags.UntrustedRoot && certificate.Subject == certificate.Issuer)
                     {
                         // Self-signed certificates with an untrusted root are valid.
                     }

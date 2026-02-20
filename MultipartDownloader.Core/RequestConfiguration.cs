@@ -16,9 +16,9 @@ public class RequestConfiguration
     /// </summary>
     public RequestConfiguration()
     {
-        Headers = [];
+        Headers = ["Accept-Encoding: identity"];
         AllowAutoRedirect = true;
-        AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate | DecompressionMethods.None;
+        AutomaticDecompression = DecompressionMethods.None;
         ClientCertificates = [];
         ImpersonationLevel = TokenImpersonationLevel.Delegation;
         KeepAlive = false; // Please keep this in false. Because of an error (An existing connection was forcibly closed by the remote host)
@@ -26,7 +26,7 @@ public class RequestConfiguration
         MaximumAutomaticRedirections = 50;
         Pipelined = true;
         ProtocolVersion = HttpVersion.Version11;
-        Timeout = 30 * 1000; // 30 seconds
+        ConnectTimeout = 30 * 1000; // 30 seconds
         UserAgent = $"{nameof(MultipartDownloader)}/{Assembly.GetExecutingAssembly().GetName().Version?.ToString(3)}";
     }
 
@@ -208,7 +208,7 @@ public class RequestConfiguration
     /// <summary>
     /// Gets or sets the timeout value in milliseconds for the request and response of http web methods.
     /// </summary>
-    public int Timeout { get; set; }
+    public int ConnectTimeout { get; set; }
 
     /// <summary>
     /// A String that contains the value of the HTTP Transfer-encoding header. The default value is null.

@@ -1,4 +1,5 @@
-﻿using System.ComponentModel;
+﻿using MultipartDownloader.Core.Enums;
+using System.ComponentModel;
 using System.Runtime.CompilerServices;
 
 namespace MultipartDownloader.Core;
@@ -19,11 +20,13 @@ public class DownloadConfiguration : ICloneable, INotifyPropertyChanged
     private int _parallelCount; // number of parallel downloads
     private int _readTimeout = 30000; // timeout (millisecond) per stream block reader
     private int _retryDelay = 1000; // timeout (millisecond) per chunk download retry
+    private int _httpClientTimeout = 100 * 1000; // Default timeout for HTTP requests. Default value is 100 seconds.
     private bool _clearPackageOnCompletionWithFailure; // Clear package and downloaded data when download completed with failure
     private long _minimumSizeOfChunking = 512; // minimum size of chunking to download a file in multiple parts
     private long _minimumChunkSize; // minimum size of a single chunk
     private bool _reserveStorageSpaceBeforeStartingDownload; // Before starting the download, reserve the storage space of the file as file size.
     private bool _enableLiveStreaming; // Get on demand downloaded data with ReceivedBytes on downloadProgressChanged event
+    private string _downloadFileExtension = ".download"; // File extension for downloaded data
     private string _chunkFilesOutputDirectory = string.Empty; // Directory to store downloaded data for each chunk for merging at the end of the download
     private int _maximumRestartWithoutClearTempFile = int.MaxValue; // The maximum number of times to restart the download without clearing the temporary files.
     private long _maximumBytesPerSecondForMerge = ThrottledStream.Infinite; // The maximum bytes per second speed for merging the final file.
@@ -36,7 +39,7 @@ public class DownloadConfiguration : ICloneable, INotifyPropertyChanged
     /// <summary>
     /// Notify every change of configuration properties.
     /// </summary>
-    protected virtual void OnPropertyChanged<T>(ref T field, T newValue, [CallerMemberName] string? name = null)
+    private void OnPropertyChanged<T>(ref T field, T newValue, [CallerMemberName] string? name = null)
     {
         if (field?.Equals(newValue) == true)
             return;
@@ -63,7 +66,7 @@ public class DownloadConfiguration : ICloneable, INotifyPropertyChanged
         set
         {
             if (value is < 1 or > 1048576) // 1MB = 1024 * 1024 bytes
-                throw new ArgumentOutOfRangeException(nameof(BufferBlockSize), "Buffer block size must be between 1 byte and 1024 KB.");
+                throw new ArgumentOutOfRangeException(nameof(BufferBlockSize), "Buffer block size must be between 1 Byte and 1 MB.");
 
             OnPropertyChanged(ref _bufferBlockSize, value);
         }
@@ -178,6 +181,21 @@ public class DownloadConfiguration : ICloneable, INotifyPropertyChanged
     }
 
     /// <summary>
+    /// Gets or sets the timeout for the HTTPClient in Milliseconds
+    /// </summary>
+    public int HttpClientTimeout
+    {
+        get => _httpClientTimeout;
+        set
+        {
+            if (value < 1000)
+                throw new ArgumentOutOfRangeException(nameof(HttpClientTimeout), "Timeout must be at least 1000 milliseconds");
+
+            OnPropertyChanged(ref _httpClientTimeout, value);
+        }
+    }
+
+    /// <summary>
     /// Gets or sets a value indicating whether to clear the package and downloaded data when the download completes with failure.
     /// </summary>
     public bool ClearPackageOnCompletionWithFailure
@@ -279,6 +297,33 @@ public class DownloadConfiguration : ICloneable, INotifyPropertyChanged
     {
         get => _enableLiveStreaming;
         set => OnPropertyChanged(ref _enableLiveStreaming, value);
+    }
+
+    /// <summary>
+    /// Determine what to do when initializing a download session.
+    /// <seealso cref="Enums.FileExistPolicy"/>
+    /// Default value is Delete. (Preserving older version behavior)
+    /// </summary>
+    public FileExistPolicy FileExistPolicy { get; set; } = FileExistPolicy.Delete;
+
+    /// <summary>
+    /// Resume download from previews position if the file downloaded before this and file continuable
+    /// </summary>
+    public bool ResumeDownloadIfCan { get; set; } = false;
+
+    /// <summary>
+    /// The extension of inprogress downloading file. Default value is "download"
+    /// </summary>
+    public string DownloadFileExtension
+    {
+        get => _downloadFileExtension;
+        set
+        {
+            if (string.IsNullOrWhiteSpace(value))
+                throw new ArgumentException("DownloadFileExtension cannot be empty");
+
+            OnPropertyChanged(ref _downloadFileExtension, '.' + value.Trim('.').Trim(',').Trim(' ').ToLower().Replace(" ", "").ToLower());
+        }
     }
 
     /// <summary>
