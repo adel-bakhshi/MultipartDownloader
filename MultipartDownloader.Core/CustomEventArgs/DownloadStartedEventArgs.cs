@@ -10,10 +10,11 @@ public class DownloadStartedEventArgs : EventArgs
     /// </summary>
     /// <param name="fileName">The name of the file being downloaded.</param>
     /// <param name="totalBytes">The total number of bytes to be received.</param>
-    public DownloadStartedEventArgs(string fileName, long totalBytes)
+    public DownloadStartedEventArgs(string fileName, long totalBytes, string[] urls)
     {
         FileName = fileName;
         TotalBytesToReceive = totalBytes;
+        Urls = urls;
     }
 
     /// <summary>
@@ -26,4 +27,9 @@ public class DownloadStartedEventArgs : EventArgs
     /// Gets the name of the file which is being downloaded.
     /// </summary>
     public string FileName { get; }
+
+    /// <summary>
+    /// Gets the URLs of the file which is being downloaded.
+    /// </summary>
+    public string[] Urls { get; }
 }

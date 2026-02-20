@@ -263,8 +263,6 @@ public abstract class AbstractDownloadService : IDownloadService, IDisposable, I
         if (GlobalCancellationTokenSource != null)
             await GlobalCancellationTokenSource.CancelAsync().ConfigureAwait(false);
 
-        // TODO: Remove this
-        //Package.SetState(DownloadStatus.Stopped);
         Resume();
     }
 

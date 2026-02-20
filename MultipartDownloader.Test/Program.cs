@@ -17,8 +17,8 @@ internal class Program
         var services = CreateServiceCollection();
         _logger = services.GetRequiredService<ILogger<Program>>();
 
-        const string url = "https://aec-333.pishtazmovie.ir/dl1vgdl/vgtrldl1/dl1/SoftWare/apk/soundtrack/2024/Nov/Silent-Hill-2-Remake-Soundtrack-by-Akira-Yamaoka_vgdl.ir.rar";
-        const string fileName = "Silent-Hill-2-Remake-Soundtrack-by-Akira-Yamaoka_vgdl.ir.rar";
+        const string url = "https://dl2.soft98.ir/soft/g/Google.Chrome.145.0.7632.110.x64.zip?1771573542";
+        const string fileName = "Google.Chrome.145.0.7632.110.x64.zip";
         var desktopDirectory = Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
         var configuration = GetDownloadConfiguration(desktopDirectory);
         var downloadService = GetDownloadService(configuration, services);
@@ -76,7 +76,9 @@ internal class Program
     {
         var loggerFactory = services.GetRequiredService<ILoggerFactory>();
         var downloadService = new DownloadService(configuration, loggerFactory);
+
         // Events
+        downloadService.DownloadStarted += DownloadServiceOnDownloadStarted;
         downloadService.MergeStarted += DownloadServiceOnMergeStarted;
         downloadService.MergeProgressChanged += DownloadServiceOnMergeProgressChanged;
         downloadService.DownloadFileCompleted += DownloadServiceOnDownloadFileCompleted;
@@ -86,6 +88,11 @@ internal class Program
         return downloadService;
     }
 
+    private static void DownloadServiceOnDownloadStarted(object? sender, DownloadStartedEventArgs e)
+    {
+        _logger?.LogInformation("Download stated. File name: '{FileName}', File size: {FileSize}, Url: '{Url}'", e.FileName, e.TotalBytesToReceive, e.Urls[0]);
+    }
+
     private static void DownloadServiceOnMergeStarted(object? sender, MergeStartedEventArgs e)
     {
         _logger?.LogInformation("Merge started...");
@@ -93,7 +100,7 @@ internal class Program
 
     private static void DownloadServiceOnMergeProgressChanged(object? sender, MergeProgressChangedEventArgs e)
     {
-        _logger?.LogInformation("Merge progress: {Progress}", e.Progress);
+        _logger?.LogInformation("Merge progress: {Progress}", e.Progress.ToString("N2"));
     }
 
     private static void DownloadServiceOnDownloadFileCompleted(object? sender, AsyncCompletedEventArgs e)
@@ -121,6 +128,6 @@ internal class Program
 
     private static void DownloadServiceOnDownloadProgressChanged(object? sender, DownloadProgressChangedEventArgs e)
     {
-        _logger?.LogInformation("Download progress: {ProgressPercentage}, Received bytes size: {Size}", e.ProgressPercentage, e.ProgressedByteSize);
+        _logger?.LogInformation("Download progress: {ProgressPercentage}, Received bytes size: {Size}", e.ProgressPercentage.ToString("N2"), e.ProgressedByteSize);
     }
 }

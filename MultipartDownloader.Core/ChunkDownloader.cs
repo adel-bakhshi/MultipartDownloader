@@ -94,7 +94,7 @@ internal class ChunkDownloader
 
             // Can't handle this exception
             _logger?.LogError(error, "Fatal error on download chunk {ChunkId}.", _chunk.Id);
-            throw new InvalidOperationException($"Fatal error on download chunk {_chunk.Id}", error);
+            throw;
         }
     }
 

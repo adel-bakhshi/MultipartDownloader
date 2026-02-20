@@ -73,7 +73,7 @@ public class DownloadService : AbstractDownloadService
             ChunkHub!.SetFileChunks(Package);
 
             Logger?.LogInformation("Starting download of {FileName} with size {TotalFileSize}", Package.FileName, Package.TotalFileSize);
-            OnDownloadStarted(new DownloadStartedEventArgs(Package.FileName, Package.TotalFileSize));
+            OnDownloadStarted(new DownloadStartedEventArgs(Package.FileName, Package.TotalFileSize, Package.Urls));
 
             if (Options.ParallelDownload)
             {
@@ -275,8 +275,8 @@ public class DownloadService : AbstractDownloadService
     /// </summary>
     private void CheckOutputDirectory()
     {
-        Options.ChunkFilesOutputDirectory = Options.ChunkFilesOutputDirectory.Trim();
-        if (string.IsNullOrEmpty(Options.ChunkFilesOutputDirectory.Trim()) && !string.IsNullOrEmpty(Package.FileName.Trim()))
+        Options.ChunkFilesOutputDirectory = Options.ChunkFilesOutputDirectory?.Trim() ?? string.Empty;
+        if (string.IsNullOrEmpty(Options.ChunkFilesOutputDirectory) && !string.IsNullOrEmpty(Package.FileName?.Trim()))
         {
             var directory = Path.GetDirectoryName(Package.FileName);
             if (!string.IsNullOrEmpty(directory))
@@ -286,7 +286,7 @@ public class DownloadService : AbstractDownloadService
         if (string.IsNullOrEmpty(Options.ChunkFilesOutputDirectory))
             throw new DownloadException(message: "The chunk files directory is not valid.");
 
-        var fileName = Path.GetFileNameWithoutExtension(Package.FileName);
+        var fileName = Path.GetFileNameWithoutExtension(Package.FileName)!;
         var temporaryPath = Path.Combine(Options.ChunkFilesOutputDirectory, fileName);
         if (Directory.Exists(Package.TemporarySavePath) && Directory.GetFiles(Package.TemporarySavePath, $"{fileName}.*.tmp").Length > 0)
             return;
@@ -360,7 +360,7 @@ public class DownloadService : AbstractDownloadService
         catch (Exception ex)
         {
             Logger?.LogError(ex, "Error during parallel download: {ErrorMessage}", ex.Message);
-            throw new InvalidOperationException("An error occurred while downloading the chunks in parallel.", ex);
+            throw;
         }
     }
 
@@ -391,7 +391,7 @@ public class DownloadService : AbstractDownloadService
         catch (Exception ex)
         {
             Logger?.LogError(ex, "Error during serial download: {ErrorMessage}", ex.Message);
-            throw new InvalidOperationException("An error occurred while downloading the chunks in serial.");
+            throw;
         }
     }
 
